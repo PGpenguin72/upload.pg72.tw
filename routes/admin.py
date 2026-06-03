@@ -34,8 +34,12 @@ async def _get_cf_public_keys() -> list[dict]:
 async def require_cf_auth(
     cf_access_jwt_assertion: str | None = Header(default=None),
 ) -> dict:
+    # 本機開發模式：跳過所有驗證
+    if settings.dev_mode:
+        return {"email": "dev@localhost"}
+
     if not cf_access_jwt_assertion:
-        raise HTTPException(status_code=401, detail="Unauthorized")
+        raise HTTPException(status_code=401, detail="Unauthorized — no CF Access token")
     try:
         keys = await _get_cf_public_keys()
         header = jwt.get_unverified_header(cf_access_jwt_assertion)

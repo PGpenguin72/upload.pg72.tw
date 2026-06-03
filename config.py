@@ -13,8 +13,11 @@ class Settings(BaseSettings):
     admin_email: str
     from_email: str = "upload@pg72.tw"
 
-    cf_team_name: str
-    cf_aud: str
+    cf_team_name: str = ""
+    cf_aud: str = ""
+
+    # 本機開發用：設 DEV_MODE=true 跳過 Cloudflare Access 驗證
+    dev_mode: bool = False
 
     base_url: str = "https://upload.pg72.tw"
     port: int = 3000
