@@ -33,6 +33,8 @@
     maxlength="16"
     autocomplete="off"
     autocorrect="off"
+    autocapitalize="characters"
+    inputmode="text"
     spellcheck="false"
   />
 
@@ -50,6 +52,7 @@
         <rect x="3" y="14" width="7" height="7" rx="1"/>
         <path d="M14 14h2v2h-2zM18 14h2M18 18h2v2h-2zM14 18v2"/>
       </svg>
+      <span class="scan-label">掃碼</span>
     </button>
   </div>
 
@@ -87,7 +90,7 @@
       <line x1="12" y1="3" x2="12" y2="15"/>
     </svg>
     <p>拖曳檔案到這裡</p>
-    <small>或點擊選擇檔案・支援任意格式</small>
+    <small>點擊或拖曳・支援任意格式</small>
     <input type="file" id="file-input" multiple hidden />
   </div>
 
