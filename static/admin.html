@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Upload Admin</title>
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body class="admin-layout">
+
+<!-- Top bar -->
+<div class="topbar">
+  <div class="logo">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+      <polyline points="17 8 12 3 7 8"/>
+      <line x1="12" y1="3" x2="12" y2="15"/>
+    </svg>
+    <span>Upload Admin</span>
+  </div>
+  <span class="email" id="admin-email"></span>
+</div>
+
+<div class="admin-body">
+
+  <!-- Stats -->
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="label">總上傳碼數</div>
+      <div class="value" id="stat-total-codes">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">有效上傳碼</div>
+      <div class="value" id="stat-active-codes">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">已上傳檔案</div>
+      <div class="value" id="stat-uploads">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">總上傳大小</div>
+      <div class="value" id="stat-size">—</div>
+    </div>
+  </div>
+
+  <!-- Codes table -->
+  <div class="table-card">
+    <div class="table-card-header">
+      <h2>上傳碼管理</h2>
+      <button class="btn btn-primary btn-sm" id="gen-code-btn">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+        </svg>
+        產生新上傳碼
+      </button>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>上傳碼</th>
+          <th>狀態</th>
+          <th>剩餘時間</th>
+          <th>已上傳</th>
+          <th>操作</th>
+        </tr>
+      </thead>
+      <tbody id="codes-tbody">
+        <tr><td colspan="5" style="text-align:center;color:var(--text-2)">載入中…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Uploads table -->
+  <div class="table-card">
+    <div class="table-card-header">
+      <h2>上傳紀錄</h2>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>原始檔名</th>
+          <th>上傳碼</th>
+          <th>大小</th>
+          <th>MIME 類型</th>
+          <th>上傳時間</th>
+        </tr>
+      </thead>
+      <tbody id="uploads-tbody">
+        <tr><td colspan="5" style="text-align:center;color:var(--text-2)">載入中…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+</div>
+
+<!-- Code modal -->
+<div class="modal-overlay" id="modal-overlay">
+  <div class="modal">
+    <h2 style="margin-bottom:4px">上傳碼</h2>
+    <p class="expires" id="modal-expires"></p>
+    <img id="modal-qr" src="" alt="QR Code" />
+    <div class="code-display" id="modal-code"></div>
+    <p style="font-size:.75rem;color:var(--text-2);margin-bottom:20px;word-break:break-all" id="modal-url"></p>
+    <div class="btn-group" style="flex-wrap:wrap">
+      <button class="btn btn-outline" id="modal-copy">複製碼</button>
+      <button class="btn btn-outline" id="modal-download-qr">下載 QR</button>
+      <button class="btn btn-primary" id="modal-close">關閉</button>
+    </div>
+  </div>
+</div>
+
+<script src="/js/admin.js"></script>
+</body>
+</html>
