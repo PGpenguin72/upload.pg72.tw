@@ -1,8 +1,9 @@
 fastapi>=0.104.0
 uvicorn[standard]>=0.24.0
 python-multipart>=0.0.6
-# Windows: python-magic-bin bundles the DLL, no system install needed
-python-magic-bin>=0.4.14
+# Windows uses bundled DLLs; macOS/Linux use the system libmagic library.
+python-magic-bin>=0.4.14; sys_platform == "win32"
+python-magic>=0.4.27; sys_platform != "win32"
 qrcode[pil]>=7.4.2
 resend>=2.0.0
 python-dotenv>=1.0.0
