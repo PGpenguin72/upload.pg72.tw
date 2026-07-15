@@ -9,6 +9,14 @@ from config import settings
 ROLE_CLAIM = "https://pg72.tw/role"
 OIDC_SCOPE = "openid profile email"
 
+# PGID (Better Auth OAuth provider) is only compatible with raw, non
+# percent-encoded client credentials. oauth4webapi-style client_secret_basic
+# percent-encodes the credentials per RFC 6749 §2.3.1, which PGID rejects.
+# client_secret_post carries the credentials as ordinary form body parameters
+# and is unambiguous for every secret character set, so it is the client
+# authentication method used against PGID here. See docs/pgid-cutover-runbook.md.
+TOKEN_ENDPOINT_AUTH_METHOD = "client_secret_post"
+
 _oauth = OAuth()
 oidc_client = _oauth.register(
     "pg72_id",
@@ -20,8 +28,8 @@ oidc_client = _oauth.register(
     client_kwargs={
         "scope": OIDC_SCOPE,
         "code_challenge_method": "S256",
-        "token_endpoint_auth_method": "client_secret_basic",
-        "revocation_endpoint_auth_method": "client_secret_basic",
+        "token_endpoint_auth_method": TOKEN_ENDPOINT_AUTH_METHOD,
+        "revocation_endpoint_auth_method": TOKEN_ENDPOINT_AUTH_METHOD,
     },
 )
 _token_cipher = Fernet(
@@ -42,10 +50,12 @@ async def load_validated_metadata() -> dict:
         raise RuntimeError("OIDC provider does not advertise PKCE S256")
     if metadata.get("authorization_response_iss_parameter_supported") is not True:
         raise RuntimeError("OIDC provider does not advertise authorization response iss")
-    if "client_secret_basic" not in metadata.get(
+    if TOKEN_ENDPOINT_AUTH_METHOD not in metadata.get(
         "token_endpoint_auth_methods_supported", []
     ):
-        raise RuntimeError("OIDC provider does not support client_secret_basic")
+        raise RuntimeError(
+            f"OIDC provider does not support {TOKEN_ENDPOINT_AUTH_METHOD}"
+        )
 
     for key in (
         "authorization_endpoint",
@@ -106,11 +116,12 @@ async def revoke_access_token(access_token: str) -> None:
     async with httpx.AsyncClient(timeout=10) as client:
         response = await client.post(
             endpoint,
-            auth=httpx.BasicAuth(
-                settings.oidc_client_id,
-                settings.oidc_client_secret.get_secret_value(),
-            ),
-            data={"token": access_token, "token_type_hint": "access_token"},
+            data={
+                "token": access_token,
+                "token_type_hint": "access_token",
+                "client_id": settings.oidc_client_id,
+                "client_secret": settings.oidc_client_secret.get_secret_value(),
+            },
             headers={"Accept": "application/json"},
         )
         response.raise_for_status()

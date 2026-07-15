@@ -295,6 +295,35 @@ class AdminOidcTests(unittest.TestCase):
 
 
 class OidcClientTests(unittest.TestCase):
+    def test_client_authentication_uses_client_secret_post(self):
+        # PGID rejects oauth4webapi-style percent-encoded client_secret_basic.
+        # The client must authenticate with client_secret_post so credentials
+        # travel as ordinary form parameters regardless of secret characters.
+        self.assertEqual(oidc.TOKEN_ENDPOINT_AUTH_METHOD, "client_secret_post")
+        self.assertEqual(
+            oidc.oidc_client.client_kwargs["token_endpoint_auth_method"],
+            "client_secret_post",
+        )
+        self.assertEqual(
+            oidc.oidc_client.client_kwargs["revocation_endpoint_auth_method"],
+            "client_secret_post",
+        )
+
+    def test_client_secret_post_encoder_does_not_over_encode_credentials(self):
+        # Regression guard for the Basic vs post compatibility finding: Authlib
+        # carries the raw client_id in the body and the transport form-encoder
+        # is the only thing that touches reserved characters, which every OAuth
+        # server form-decodes. '-' and '_' are unreserved and pass untouched.
+        from authlib.oauth2.auth import encode_client_secret_post
+
+        class _Client:
+            client_id = "pg72-upload"
+            client_secret = "pg72_cs_A-b_C.d"
+
+        _, _, body = encode_client_secret_post(_Client, None, "u", {}, {})
+        self.assertIn("client_id=pg72-upload", body)
+        self.assertIn("client_secret=pg72_cs_A-b_C.d", body)
+
     def test_authorization_url_contains_pkce_state_and_nonce(self):
         previous_metadata = dict(oidc.oidc_client.server_metadata)
         verifier = "test-verifier-with-enough-entropy-0123456789-ABCDEFGHIJKLMN"
@@ -309,7 +338,7 @@ class OidcClientTests(unittest.TestCase):
             "userinfo_endpoint": f"{settings.oidc_issuer}/oauth2/userinfo",
             "code_challenge_methods_supported": ["S256"],
             "authorization_response_iss_parameter_supported": True,
-            "token_endpoint_auth_methods_supported": ["client_secret_basic"],
+            "token_endpoint_auth_methods_supported": ["client_secret_post"],
         }
         oidc.oidc_client.server_metadata.clear()
         oidc.oidc_client.server_metadata.update(metadata)

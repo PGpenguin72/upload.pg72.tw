@@ -55,7 +55,7 @@ flowchart LR
 | Grant types | `authorization_code` |
 | Response types | `code` |
 | Scopes | `openid profile email` |
-| Token endpoint auth | `client_secret_basic` |
+| Token endpoint auth | `client_secret_post` |
 | Require PKCE | `true` |
 | Enable end session | `true` |
 | Skip consent | `false` |
@@ -125,6 +125,8 @@ VALUES
 停用管理員時將 `is_active` 改為 `0`，下一個 admin request 會移除該本機 session。變更 bootstrap 環境變數不會覆寫現有 role 或狀態。
 
 ## 正式部署
+
+切換到 production PGID 的完整步驟（建 client、設 secret、部署、origin lockdown、煙霧測試、rollback）見 [docs/pgid-cutover-runbook.md](docs/pgid-cutover-runbook.md)。摘要：
 
 1. 先在 PGID 建立上述 client，將 client ID/secret 與 bootstrap admin `sub` 寫入 Upload 的 `.env`。
 2. 備份 SQLite 後啟動新版本，確認 `schema_migrations` 有 `0001_admin_oidc.sql`。
