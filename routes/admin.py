@@ -172,7 +172,7 @@ async def auth_callback(
         response.delete_cookie(OAUTH_COOKIE_NAME, path="/admin/auth")
         return response
     if error or not code or iss != settings.oidc_issuer:
-        response = PlainTextResponse("PG72 ID 登入未完成。", status_code=400)
+        response = PlainTextResponse("PGID 登入未完成。", status_code=400)
         response.delete_cookie(OAUTH_COOKIE_NAME, path="/admin/auth")
         return response
 
@@ -184,7 +184,7 @@ async def auth_callback(
         )
     except Exception as exc:
         logger.warning("OIDC callback validation failed: %s", type(exc).__name__)
-        response = PlainTextResponse("PG72 ID token 驗證失敗。", status_code=400)
+        response = PlainTextResponse("PGID token 驗證失敗。", status_code=400)
         response.delete_cookie(OAUTH_COOKIE_NAME, path="/admin/auth")
         return response
 
@@ -205,7 +205,7 @@ async def auth_callback(
             await revoke_access_token(token["access_token"])
         except Exception:
             logger.warning("Rejected OIDC token revocation failed")
-        response = PlainTextResponse("此 PG72 ID 未獲 Upload 管理權限。", status_code=403)
+        response = PlainTextResponse("此 PGID 未獲 Upload 管理權限。", status_code=403)
         response.delete_cookie(OAUTH_COOKIE_NAME, path="/admin/auth")
         return response
 
@@ -219,7 +219,7 @@ async def auth_callback(
             await revoke_access_token(token["access_token"])
         except Exception:
             logger.warning("Short-lived OIDC token revocation failed")
-        response = PlainTextResponse("PG72 ID token 有效期不足。", status_code=400)
+        response = PlainTextResponse("PGID token 有效期不足。", status_code=400)
         response.delete_cookie(OAUTH_COOKIE_NAME, path="/admin/auth")
         return response
 

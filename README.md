@@ -1,6 +1,6 @@
 # PG72 Upload
 
-使用限時上傳碼與 QR Code 控制存取的大檔上傳服務。管理員以 PG72 ID OIDC 登入後建立上傳碼，上傳者驗證後可多檔、分塊上傳；完成後系統會寫入 SQLite 並透過 Resend 通知管理員。
+使用限時上傳碼與 QR Code 控制存取的大檔上傳服務。管理員以 PGID OIDC 登入後建立上傳碼，上傳者驗證後可多檔、分塊上傳；完成後系統會寫入 SQLite 並透過 Resend 通知管理員。
 
 ![PG72 Upload 社群預覽圖](static/og-preview.png)
 
@@ -8,8 +8,8 @@
 
 | 功能 | 說明 |
 | --- | --- |
-| PG72 ID SSO | Authorization Code + PKCE S256，驗證 state、nonce、callback `iss`、ID Token 與 UserInfo |
-| 管理授權 | 以 PG72 ID 不可變 `sub` 的本機 allowlist 與 `admin` role 雙重驗證 |
+| PGID SSO | Authorization Code + PKCE S256，驗證 state、nonce、callback `iss`、ID Token 與 UserInfo |
+| 管理授權 | 以 PGID 不可變 `sub` 的本機 allowlist 與 `admin` role 雙重驗證 |
 | 限時上傳碼 | 管理員建立不含易混淆字元的 16 位代碼，可到期或手動撤銷 |
 | QR Code | 管理端可顯示、下載 QR，上傳者也可以相機掃碼 |
 | 分塊上傳 | 瀏覽器以 5 MiB 分塊上傳，後端限制單塊最大 10 MiB |
@@ -22,7 +22,7 @@
 
 ```mermaid
 flowchart LR
-    Admin["管理員"] --> SSO["PG72 ID"]
+    Admin["管理員"] --> SSO["PGID"]
     SSO -->|"OIDC code + PKCE"| App["FastAPI"]
     User["上傳者"] --> App
     App --> DB[("SQLite")]
@@ -35,14 +35,14 @@ flowchart LR
 
 1. `GET /admin` 在沒有有效本機 session 時轉到 `GET /admin/login`。
 2. Upload 將一次性 state、nonce 與 PKCE verifier 寫入 SQLite，瀏覽器只取得 opaque transaction cookie。
-3. PG72 ID 授權後回到 `GET /admin/auth/callback`。Authlib 透過 discovery/JWKS 驗證 ID Token，再校對 UserInfo `sub`、已驗證 email 與 namespaced role claim。
+3. PGID 授權後回到 `GET /admin/auth/callback`。Authlib 透過 discovery/JWKS 驗證 ID Token，再校對 UserInfo `sub`、已驗證 email 與 namespaced role claim。
 4. 只有 `admin_identities` allowlist 內且 role 相符的 `sub` 會取得本機 admin session。瀏覽器 cookie 是隨機 opaque value，SQLite 只儲存 SHA-256 hash。
 5. 會變更資料的 admin API 另外要求精確同網站 `Origin` 與 session-bound CSRF token。
 6. `POST /admin/logout` 先刪本機 session，再 best-effort 撤銷 access token 並執行 OIDC RP-Initiated Logout。
 
 公開上傳流程保持獨立：`POST /api/validate` 將 16 字上傳碼換成 `X-Session-Token`，之後的 init/chunk/complete 只辨識該 upload session，不會接受或依賴 admin cookie。
 
-## PG72 ID client 設定
+## PGID client 設定
 
 在 SSO 端建立 confidential web client，下列值必須精確相符：
 
@@ -60,11 +60,11 @@ flowchart LR
 | Enable end session | `true` |
 | Skip consent | `false` |
 
-Client secret 由 SSO 產生，只放在 Upload 伺服器的 `OIDC_CLIENT_SECRET`，不得放入 Git、前端或 log。`skipConsent=false` 保留 PG72 ID 對新應用的授權確認頁。
+Client secret 由 SSO 產生，只放在 Upload 伺服器的 `OIDC_CLIENT_SECRET`，不得放入 Git、前端或 log。`skipConsent=false` 保留 PGID 對新應用的授權確認頁。
 
 ## 快速啟動
 
-需要 Python 3.10 以上、Resend API key、PG72 ID client 與 `libmagic`。macOS 可執行 `brew install libmagic`，Debian/Ubuntu 可執行 `sudo apt-get install libmagic1`；Windows 由 `python-magic-bin` 提供 DLL。
+需要 Python 3.10 以上、Resend API key、PGID client 與 `libmagic`。macOS 可執行 `brew install libmagic`，Debian/Ubuntu 可執行 `sudo apt-get install libmagic1`；Windows 由 `python-magic-bin` 提供 DLL。
 
 ```bash
 python3 -m venv .venv
@@ -92,10 +92,10 @@ Windows 可以 `start.bat` 啟動，或在 PowerShell 執行 `./start.ps1`。公
 | `ADMIN_EMAIL` | 必填 | 上傳完成通知收件人，與 SSO 登入 email 無關 |
 | `FROM_EMAIL` | `upload@pg72.tw` | 通知信寄件人，必須通過 Resend 驗證 |
 | `BASE_URL` | `https://upload.pg72.tw` | 精確 HTTPS origin，用於 callback、Origin 與 QR URL |
-| `OIDC_ISSUER` | `https://sso.pg72.tw` | PG72 ID 精確 HTTPS issuer origin |
-| `OIDC_CLIENT_ID` | 必填 | PG72 ID client ID |
+| `OIDC_ISSUER` | `https://sso.pg72.tw` | PGID 精確 HTTPS issuer origin |
+| `OIDC_CLIENT_ID` | 必填 | PGID client ID |
 | `OIDC_CLIENT_SECRET` | 必填 | confidential client secret |
-| `OIDC_BOOTSTRAP_ADMIN_SUB` | 必填 | 第一位管理員的 immutable PG72 ID `sub`，不是 email |
+| `OIDC_BOOTSTRAP_ADMIN_SUB` | 必填 | 第一位管理員的 immutable PGID `sub`，不是 email |
 | `OIDC_ADMIN_REQUIRED_ROLE` | `admin` | 該 allowlist identity 必須同時具有的 role |
 | `ADMIN_TOKEN_ENCRYPTION_KEY` | 必填 | 本機儲存 OIDC token 的 Fernet key |
 | `ADMIN_SESSION_TTL_SECONDS` | `900` | admin session 最長有效秒數 |
@@ -113,7 +113,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 
 SQLite 預設位於 `./upload_service.db`。應用啟動時會自動執行 `migrations/*.sql`，並在 `schema_migrations` 記錄已套用版本；`0001_admin_oidc.sql` 新增 admin identity、一次性 OIDC transaction 與 admin session table，不會改寫原有 `codes`、`sessions`、`pending_uploads`、`uploads`。部署前仍應備份 `upload_service.db*`。
 
-首次啟動會以 `OIDC_BOOTSTRAP_ADMIN_SUB` 做 `INSERT OR IGNORE`。後續管理員必須使用 PG72 ID 的 `sub` 新增，不能用 email 當授權鍵。範例：
+首次啟動會以 `OIDC_BOOTSTRAP_ADMIN_SUB` 做 `INSERT OR IGNORE`。後續管理員必須使用 PGID 的 `sub` 新增，不能用 email 當授權鍵。範例：
 
 ```sql
 INSERT INTO admin_identities
@@ -126,7 +126,7 @@ VALUES
 
 ## 正式部署
 
-1. 先在 PG72 ID 建立上述 client，將 client ID/secret 與 bootstrap admin `sub` 寫入 Upload 的 `.env`。
+1. 先在 PGID 建立上述 client，將 client ID/secret 與 bootstrap admin `sub` 寫入 Upload 的 `.env`。
 2. 備份 SQLite 後啟動新版本，確認 `schema_migrations` 有 `0001_admin_oidc.sql`。
 3. 使用 service manager 在 `127.0.0.1:3000` 執行 `main:app`。
 4. 參考 [nginx.conf](nginx.conf) 建立 HTTPS 反向代理，保留 `proxy_request_buffering off` 與長上傳 timeout。應用不讀取 Cloudflare Access identity header。
@@ -141,7 +141,7 @@ VALUES
 | `POST` | `/api/upload/init` | `X-Session-Token` | 建立 pending upload |
 | `PUT` | `/api/upload/{upload_id}/chunk/{index}` | `X-Session-Token` | 上傳單一分塊 |
 | `POST` | `/api/upload/{upload_id}/complete` | `X-Session-Token` | 組檔並寄送通知 |
-| `GET` | `/admin/login` | OIDC transaction | 開始 PG72 ID 登入 |
+| `GET` | `/admin/login` | OIDC transaction | 開始 PGID 登入 |
 | `GET` | `/admin/auth/callback` | state + PKCE + nonce + OIDC validation | 完成登入 |
 | `POST` | `/admin/logout` | admin session + Origin + CSRF | 刪除 session、撤銷 token、開始 RP logout |
 | `GET` | `/admin/api/me` | admin session | 取得 email、role 與 CSRF token |
@@ -188,7 +188,7 @@ python -m unittest discover -s tests -v
 ## 安全注意事項
 
 - 不要提交 `.env`、SQLite、`uploads/`、`temp/` 或 client secret。
-- 不得將 email 當成 admin 授權鍵；只使用 PG72 ID issuer 下的 immutable `sub`。
+- 不得將 email 當成 admin 授權鍵；只使用 PGID issuer 下的 immutable `sub`。
 - Admin cookie 維持 `Secure` / `HttpOnly` / `SameSite=Lax`，不要新增跳過 OIDC 的 bypass。
 - 上傳 API 必須繼續驗證 upload session 與對應上傳碼的到期、撤銷狀態。
 - MIME 檢查只在通知信標示危險類型，不是防毒或惡意程式掃描。

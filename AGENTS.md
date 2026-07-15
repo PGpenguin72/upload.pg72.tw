@@ -4,14 +4,14 @@ This file applies to the entire repository. Read `README.md` before changing beh
 
 ## Project in one minute
 
-PG72 Upload is a self-hosted FastAPI file intake service. Administrators authenticate with PG72 ID through OIDC Authorization Code + PKCE. An authorized administrator creates a 16-character time-limited upload code; the public client exchanges that code for a separate upload session and uploads files in 5 MiB chunks. The server assembles chunks into `uploads/`, records metadata in SQLite, and sends an asynchronous Resend notification.
+PG72 Upload is a self-hosted FastAPI file intake service. Administrators authenticate with PGID through OIDC Authorization Code + PKCE. An authorized administrator creates a 16-character time-limited upload code; the public client exchanges that code for a separate upload session and uploads files in 5 MiB chunks. The server assembles chunks into `uploads/`, records metadata in SQLite, and sends an asynchronous Resend notification.
 
 There is no public file download endpoint. The admin UI lists metadata only.
 
 ## Start here
 
 1. Copy `.env.example` to `.env` and fill every required value.
-2. Register the exact callback and post-logout URIs documented in `README.md` with PG72 ID.
+2. Register the exact callback and post-logout URIs documented in `README.md` with PGID.
 3. Install dependencies with `python -m pip install -r requirements.txt`.
 4. Run `python main.py`. The public page can be viewed over local HTTP; admin OIDC requires HTTPS because its cookies are always `Secure`.
 
@@ -49,7 +49,7 @@ Public upload flow:
 Admin flow:
 
 1. `/admin/login` stores hashed state plus nonce and PKCE verifier in a short-lived SQLite transaction. The browser receives only an opaque transaction cookie.
-2. `/admin/auth/callback` consumes the transaction once and requires the PG72 ID authorization response `iss` parameter.
+2. `/admin/auth/callback` consumes the transaction once and requires the PGID authorization response `iss` parameter.
 3. Authlib validates discovery, endpoint origins, PKCE support, ID Token signature/issuer/audience/nonce/time claims, and the UserInfo subject.
 4. Authorization requires immutable `sub` membership in `admin_identities`, an active row, verified email, and exact `https://pg72.tw/role` equality with `required_role`.
 5. The browser receives an opaque admin cookie; only its SHA-256 hash is stored. Access and ID tokens are encrypted at rest with the configured Fernet key.
@@ -75,7 +75,7 @@ Never delete or rewrite user runtime data during development. Tests must redirec
 
 - Never add an auth bypass or trust Cloudflare Access identity headers. The app is its own OIDC relying party.
 - Keep `BASE_URL` and `OIDC_ISSUER` as exact HTTPS origins; callback, cookie, CSRF and discovery checks depend on them.
-- Do not authorize by email. Use the immutable issuer-scoped PG72 ID `sub` plus the required namespaced role claim.
+- Do not authorize by email. Use the immutable issuer-scoped PGID `sub` plus the required namespaced role claim.
 - Keep state transactions single-use, PKCE S256, nonce verification, authorization-response `iss`, strict discovery endpoint origins, and verified UserInfo `sub`.
 - Keep admin cookies `Secure`, `HttpOnly`, `SameSite=Lax`, scoped to `/admin`, random and opaque. Persist only hashes.
 - Keep unsafe admin actions protected by exact `Origin` and session-bound CSRF tokens.
