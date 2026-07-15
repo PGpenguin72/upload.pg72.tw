@@ -367,6 +367,13 @@ body.admin-layout::before {
   color: var(--text-3);
   font-family: "JetBrains Mono", monospace;
 }
+.admin-account {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  min-width: 0;
+}
 
 .admin-body {
   padding: 32px;
@@ -598,6 +605,7 @@ tr:hover td { background: rgba(255,255,255,.02); }
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  .admin-account { gap: 8px; }
 
   .admin-body { padding: 12px; }
 

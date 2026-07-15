@@ -1,17 +1,31 @@
 "use strict";
 
+const { escapeHtml: escHtml, isUploadCode, isCodeId } = globalThis.PG72AdminSecurity;
+let csrfToken = null;
+
 // ── Init ───────────────────────────────────────────────────────────────────
 (async () => {
-  await Promise.all([loadMe(), loadStats(), loadCodes(), loadUploads()]);
+  await loadMe();
+  await Promise.all([loadStats(), loadCodes(), loadUploads()]);
   setInterval(async () => { await loadStats(); await loadCodes(); await loadUploads(); }, 30000);
 })();
 
 async function loadMe() {
   try {
-    const { email } = await api("/admin/api/me");
-    document.getElementById("admin-email").textContent = email;
+    const { email, role, csrf_token } = await api("/admin/api/me");
+    csrfToken = csrf_token;
+    document.getElementById("admin-email").textContent = `${email} · ${role}`;
   } catch {}
 }
+
+document.getElementById("logout-btn").addEventListener("click", async () => {
+  try {
+    const { logout_url } = await api("/admin/logout", "POST");
+    window.location.assign(logout_url || "/");
+  } catch (err) {
+    alert("登出失敗：" + err.message);
+  }
+});
 
 async function loadStats() {
   try {
@@ -29,7 +43,7 @@ async function loadCodes() {
     const codes = await api("/admin/api/codes");
     const tbody = document.getElementById("codes-tbody");
     const now   = Date.now() / 1000;
-    tbody.innerHTML = codes.map((c) => {
+    tbody.innerHTML = codes.filter((c) => isCodeId(c.id) && isUploadCode(c.code)).map((c) => {
       const active   = !c.is_revoked && c.expires_at > now;
       const expired  = !c.is_revoked && c.expires_at <= now;
       const revoked  = c.is_revoked;
@@ -38,19 +52,29 @@ async function loadCodes() {
                      :           `<span class="status-badge status-expired">● 已過期</span>`;
       const remaining = active ? `${Math.max(0, Math.floor((c.expires_at - now) / 60))} 分鐘後到期` : "—";
       const actions = active
-        ? `<button class="btn btn-outline btn-sm" onclick="showQr('${c.id}')">QR</button>
-           <button class="btn btn-danger btn-sm" onclick="revokeCode('${c.id}')">撤銷</button>`
-        : `<button class="btn btn-outline btn-sm" onclick="showQr('${c.id}')">QR</button>`;
+        ? `<button class="btn btn-outline btn-sm" type="button" data-code-action="qr" data-code-id="${c.id}">QR</button>
+           <button class="btn btn-danger btn-sm" type="button" data-code-action="revoke" data-code-id="${c.id}">撤銷</button>`
+        : `<button class="btn btn-outline btn-sm" type="button" data-code-action="qr" data-code-id="${c.id}">QR</button>`;
+      const uploadCount = Number.isFinite(Number(c.upload_count)) ? Number(c.upload_count) : 0;
       return `<tr>
         <td><span class="code-badge">${c.code}</span></td>
         <td>${badge}</td>
         <td>${remaining}</td>
-        <td>${c.upload_count ?? 0}</td>
+        <td>${uploadCount}</td>
         <td style="white-space:nowrap">${actions}</td>
       </tr>`;
     }).join("") || `<tr><td colspan="5" style="text-align:center;color:var(--text-2)">尚無上傳碼</td></tr>`;
   } catch {}
 }
+
+document.getElementById("codes-tbody").addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-code-action]");
+  if (!button) return;
+  const codeId = button.dataset.codeId;
+  if (!isCodeId(codeId)) return;
+  if (button.dataset.codeAction === "qr") showQr(codeId);
+  if (button.dataset.codeAction === "revoke") revokeCode(codeId);
+});
 
 document.getElementById("gen-code-btn").addEventListener("click", async () => {
   try {
@@ -88,9 +112,9 @@ async function loadUploads() {
     const tbody   = document.getElementById("uploads-tbody");
     tbody.innerHTML = uploads.map((u) => `<tr>
       <td>${escHtml(u.original_filename)}</td>
-      <td><span class="code-badge">${u.code}</span></td>
+      <td><span class="code-badge">${escHtml(u.code)}</span></td>
       <td>${fmtSize(u.file_size)}</td>
-      <td>${u.mime_type || "—"}</td>
+      <td>${escHtml(u.mime_type || "—")}</td>
       <td>${new Date(u.uploaded_at * 1000).toLocaleString()}</td>
     </tr>`).join("") || `<tr><td colspan="5" style="text-align:center;color:var(--text-2)">尚無上傳紀錄</td></tr>`;
   } catch {}
@@ -132,11 +156,19 @@ document.getElementById("modal-download-qr").addEventListener("click", () => {
 // ── Helpers ────────────────────────────────────────────────────────────────
 async function api(path, method = "GET", body) {
   const opts = { method, headers: {} };
+  if (method !== "GET" && method !== "HEAD") {
+    if (!csrfToken) throw new Error("CSRF token 尚未載入");
+    opts.headers["X-CSRF-Token"] = csrfToken;
+  }
   if (body !== undefined) {
     opts.headers["Content-Type"] = "application/json";
     opts.body = JSON.stringify(body);
   }
   const res = await fetch(path, opts);
+  if (res.status === 401) {
+    window.location.assign("/admin/login");
+    throw new Error("管理員登入已過期");
+  }
   if (!res.ok) {
     const json = await res.json().catch(() => ({}));
     throw new Error(json.detail || `HTTP ${res.status}`);
@@ -150,8 +182,4 @@ function fmtSize(bytes) {
   if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KB`;
   if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
   return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
-}
-
-function escHtml(str = "") {
-  return str.replace(/[&<>"']/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
 }
