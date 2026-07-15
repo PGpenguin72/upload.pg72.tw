@@ -1,128 +1,81 @@
 # PG72 Upload
 
-使用限時上傳碼與 QR Code 控制存取的大檔上傳服務。管理員在 Cloudflare Access 保護的後台建立上傳碼，使用者驗證後可以多檔、分塊上傳；完成後系統會寫入 SQLite 紀錄並透過 Resend 通知管理員。
+使用限時上傳碼與 QR Code 控制存取的大檔上傳服務。管理員以 PG72 ID OIDC 登入後建立上傳碼，上傳者驗證後可多檔、分塊上傳；完成後系統會寫入 SQLite 並透過 Resend 通知管理員。
 
 ![PG72 Upload 社群預覽圖](static/og-preview.png)
 
-## 功能與圖示
+## 主要功能
 
-| 圖示 | 功能 | 說明 |
-| --- | --- | --- |
-| 🔐 | 後台保護 | `/admin` 與其 API 必須通過 Cloudflare Access JWT 驗證 |
-| 🔑 | 限時上傳碼 | 管理員建立不含易混淆字元的 16 位代碼，可到期或手動撤銷 |
-| 📱 | QR Code | 管理端可顯示、下載 QR，使用者也可用相機掃碼 |
-| 🧩 | 分塊上傳 | 瀏覽器以 5 MiB 分塊上傳，後端限制單塊最大 10 MiB |
-| 📂 | 多檔與拖曳 | 可一次選取多個檔案，顯示各檔案進度與狀態 |
-| 🗃️ | 本機儲存 | 檔案寫入 `uploads/`，索引、代碼與 session 寫入 SQLite |
-| ✉️ | 上傳通知 | 組檔完成後以 Resend 寄送檔名、大小、MIME 與儲存名稱 |
-| 🧹 | 自動清理 | 每小時清理過期 session，並刪除超過 2 小時的未完成上傳與暫存目錄 |
+| 功能 | 說明 |
+| --- | --- |
+| PG72 ID SSO | Authorization Code + PKCE S256，驗證 state、nonce、callback `iss`、ID Token 與 UserInfo |
+| 管理授權 | 以 PG72 ID 不可變 `sub` 的本機 allowlist 與 `admin` role 雙重驗證 |
+| 限時上傳碼 | 管理員建立不含易混淆字元的 16 位代碼，可到期或手動撤銷 |
+| QR Code | 管理端可顯示、下載 QR，上傳者也可以相機掃碼 |
+| 分塊上傳 | 瀏覽器以 5 MiB 分塊上傳，後端限制單塊最大 10 MiB |
+| 本機儲存 | 檔案寫入 `uploads/`，索引、上傳碼與 session 寫入 SQLite |
+| 通知與清理 | 完成後送出 Resend 通知，每小時清理過期 session 與未完成上傳 |
 
-## 系統架構
+本專案沒有公開檔案下載 API，管理頁只列出 metadata。
+
+## 架構與登入流程
 
 ```mermaid
 flowchart LR
-    Admin["👤 管理員"] --> CF["🔐 Cloudflare Access"]
-    User["📱 上傳者"] --> CFProxy["Cloudflare Proxy"]
-    CF --> Proxy["Nginx"]
-    CFProxy --> Proxy
-    Proxy --> App["FastAPI / Uvicorn"]
-
-    App --> Static["HTML / CSS / JavaScript"]
+    Admin["管理員"] --> SSO["PG72 ID"]
+    SSO -->|"OIDC code + PKCE"| App["FastAPI"]
+    User["上傳者"] --> App
     App --> DB[("SQLite")]
-    App --> Temp["🧩 temp/ 分塊"]
-    Temp --> Files["📁 uploads/ 完整檔案"]
-    App --> Resend["✉️ Resend API"]
-    Resend --> Mailbox["管理員信箱"]
+    App --> Temp["temp/ 分塊"]
+    Temp --> Files["uploads/ 完整檔案"]
+    App --> Resend["Resend API"]
 ```
 
-Cloudflare 與 Nginx 負責邊界存取與反向代理；FastAPI 同時提供靜態網頁、公開上傳 API 與受保護的管理 API。目前檔案完全儲存在服務器本機，不會透過公開 URL 提供下載。
+管理流程：
 
-## 上傳流程
+1. `GET /admin` 在沒有有效本機 session 時轉到 `GET /admin/login`。
+2. Upload 將一次性 state、nonce 與 PKCE verifier 寫入 SQLite，瀏覽器只取得 opaque transaction cookie。
+3. PG72 ID 授權後回到 `GET /admin/auth/callback`。Authlib 透過 discovery/JWKS 驗證 ID Token，再校對 UserInfo `sub`、已驗證 email 與 namespaced role claim。
+4. 只有 `admin_identities` allowlist 內且 role 相符的 `sub` 會取得本機 admin session。瀏覽器 cookie 是隨機 opaque value，SQLite 只儲存 SHA-256 hash。
+5. 會變更資料的 admin API 另外要求精確同網站 `Origin` 與 session-bound CSRF token。
+6. `POST /admin/logout` 先刪本機 session，再 best-effort 撤銷 access token 並執行 OIDC RP-Initiated Logout。
 
-```mermaid
-sequenceDiagram
-    actor Admin as 管理員
-    actor User as 上傳者
-    participant Web as 瀏覽器
-    participant API as FastAPI
-    participant DB as SQLite
-    participant FS as 檔案系統
-    participant Mail as Resend
+公開上傳流程保持獨立：`POST /api/validate` 將 16 字上傳碼換成 `X-Session-Token`，之後的 init/chunk/complete 只辨識該 upload session，不會接受或依賴 admin cookie。
 
-    Admin->>API: 經 Cloudflare Access 開啟 /admin
-    Admin->>API: POST /admin/api/codes
-    API->>DB: 建立 16 位限時上傳碼
-    API-->>Admin: 上傳碼、專屬 URL 與 QR Code
-    Admin-->>User: 分享代碼或 QR Code
+## PG72 ID client 設定
 
-    User->>Web: 輸入代碼或掃描 QR
-    Web->>API: POST /api/validate
-    API->>DB: 檢查存在、到期、撤銷狀態
-    API->>DB: 建立 session token
-    API-->>Web: session token 與到期時間
+在 SSO 端建立 confidential web client，下列值必須精確相符：
 
-    User->>Web: 選擇或拖曳檔案
-    Web->>API: POST /api/upload/init
-    API->>DB: 建立 pending upload
-    loop 每個 5 MiB 分塊
-        Web->>API: PUT /api/upload/{id}/chunk/{index}
-        API->>FS: 寫入 temp/{upload_id}/{index}
-        API-->>Web: 已收到的分塊數
-    end
-    Web->>API: POST /api/upload/{id}/complete
-    API->>FS: 檢查分塊、組檔、辨識 MIME
-    API->>DB: 寫入完成紀錄並刪除 pending upload
-    API-->>Web: 上傳完成
-    API-->>Mail: 背景寄送通知
-```
+| 欄位 | 值 |
+| --- | --- |
+| Client ID | `pg72-upload` |
+| Client type | confidential web client (`public=false`) |
+| Redirect URI | `https://upload.pg72.tw/admin/auth/callback` |
+| Post-logout redirect URI | `https://upload.pg72.tw/admin/logged-out` |
+| Grant types | `authorization_code` |
+| Response types | `code` |
+| Scopes | `openid profile email` |
+| Token endpoint auth | `client_secret_basic` |
+| Require PKCE | `true` |
+| Enable end session | `true` |
+| Skip consent | `false` |
 
-## 使用方式
-
-### 管理員
-
-1. 開啟 `https://upload.pg72.tw/admin`，完成 Cloudflare Access 登入。
-2. 按「產生新上傳碼」，取得代碼、專屬 URL 與 QR Code。
-3. 複製代碼或下載 QR Code 給上傳者。
-4. 在後台檢視代碼狀態、上傳紀錄與容量；必要時可立即撤銷代碼。
-
-### 上傳者
-
-1. 開啟首頁，輸入 16 位上傳碼；也可掃描 QR Code 直接帶入。
-2. 驗證通過後，點擊或拖曳一個以上的檔案。
-3. 按「上傳所有檔案」，保持頁面開啟直到所有檔案顯示「完成」。
+Client secret 由 SSO 產生，只放在 Upload 伺服器的 `OIDC_CLIENT_SECRET`，不得放入 Git、前端或 log。`skipConsent=false` 保留 PG72 ID 對新應用的授權確認頁。
 
 ## 快速啟動
 
-### 環境需求
-
-- Python 3.10 以上
-- 可用的 Resend API key 與已驗證寄件人（正式通知所需）
-- 正式環境需 Cloudflare Access application、Nginx 與 HTTPS 代理
-- macOS / Linux 需要系統可讀取的 `libmagic`（macOS 可執行 `brew install libmagic`，Debian / Ubuntu 可執行 `sudo apt-get install libmagic1`）；Windows 由 `python-magic-bin` 提供 DLL
-
-### macOS / Linux
+需要 Python 3.10 以上、Resend API key、PG72 ID client 與 `libmagic`。macOS 可執行 `brew install libmagic`，Debian/Ubuntu 可執行 `sudo apt-get install libmagic1`；Windows 由 `python-magic-bin` 提供 DLL。
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
 cp .env.example .env
-# 編輯 .env，本機開發可將 DEV_MODE 設為 true
+# 編輯 .env 後啟動
 python main.py
 ```
 
-### Windows
-
-```bat
-copy .env.example .env
-rem 編輯 .env，本機開發可將 DEV_MODE 設為 true
-start.bat
-```
-
-也可在 PowerShell 執行 `./start.ps1`。啟動後開啟：
-
-- 上傳頁：`http://127.0.0.1:3000/`
-- 管理頁：`http://127.0.0.1:3000/admin`（僅限 `DEV_MODE=true` 時可跳過 Cloudflare Access）
+Windows 可以 `start.bat` 啟動，或在 PowerShell 執行 `./start.ps1`。公開上傳頁可在 `http://127.0.0.1:3000/` 預覽；admin OIDC cookie 固定為 `Secure`，本機端到端測試應使用 HTTPS 反向代理或執行自動化測試，沒有跳過登入的開發模式。
 
 ## 環境變數
 
@@ -136,96 +89,116 @@ start.bat
 | `MAX_CHUNK_SIZE_BYTES` | `10485760` | 後端接受的單塊上限，預設 10 MiB |
 | `SESSION_TTL_SECONDS` | `3600` | 新上傳碼的有效秒數 |
 | `RESEND_API_KEY` | 必填 | Resend API key |
-| `ADMIN_EMAIL` | 必填 | 上傳完成通知收件人 |
+| `ADMIN_EMAIL` | 必填 | 上傳完成通知收件人，與 SSO 登入 email 無關 |
 | `FROM_EMAIL` | `upload@pg72.tw` | 通知信寄件人，必須通過 Resend 驗證 |
-| `CF_TEAM_NAME` | 空 | Cloudflare Zero Trust team name |
-| `CF_AUD` | 空 | Cloudflare Access application AUD tag |
-| `DEV_MODE` | `false` | `true` 時跳過管理端驗證，僅限本機開發 |
-| `BASE_URL` | `https://upload.pg72.tw` | 產生 QR Code 與專屬上傳 URL 的基礎網址 |
+| `BASE_URL` | `https://upload.pg72.tw` | 精確 HTTPS origin，用於 callback、Origin 與 QR URL |
+| `OIDC_ISSUER` | `https://sso.pg72.tw` | PG72 ID 精確 HTTPS issuer origin |
+| `OIDC_CLIENT_ID` | 必填 | PG72 ID client ID |
+| `OIDC_CLIENT_SECRET` | 必填 | confidential client secret |
+| `OIDC_BOOTSTRAP_ADMIN_SUB` | 必填 | 第一位管理員的 immutable PG72 ID `sub`，不是 email |
+| `OIDC_ADMIN_REQUIRED_ROLE` | `admin` | 該 allowlist identity 必須同時具有的 role |
+| `ADMIN_TOKEN_ENCRYPTION_KEY` | 必填 | 本機儲存 OIDC token 的 Fernet key |
+| `ADMIN_SESSION_TTL_SECONDS` | `900` | admin session 最長有效秒數 |
+| `ADMIN_OAUTH_TRANSACTION_TTL_SECONDS` | `600` | login/logout transaction 有效秒數 |
+| `ADMIN_COOKIE_NAME` | `pg72_upload_admin` | admin opaque session cookie 名稱 |
 | `PORT` | `3000` | Uvicorn 監聽連接埠 |
 
-SQLite 固定建立於專案根目錄的 `upload_service.db`。
+產生 Fernet key：
+
+```bash
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+## SQLite migration 與管理員 allowlist
+
+SQLite 預設位於 `./upload_service.db`。應用啟動時會自動執行 `migrations/*.sql`，並在 `schema_migrations` 記錄已套用版本；`0001_admin_oidc.sql` 新增 admin identity、一次性 OIDC transaction 與 admin session table，不會改寫原有 `codes`、`sessions`、`pending_uploads`、`uploads`。部署前仍應備份 `upload_service.db*`。
+
+首次啟動會以 `OIDC_BOOTSTRAP_ADMIN_SUB` 做 `INSERT OR IGNORE`。後續管理員必須使用 PG72 ID 的 `sub` 新增，不能用 email 當授權鍵。範例：
+
+```sql
+INSERT INTO admin_identities
+  (subject, required_role, is_active, created_at, updated_at)
+VALUES
+  ('PG72-ID-SUB', 'admin', 1, unixepoch(), unixepoch());
+```
+
+停用管理員時將 `is_active` 改為 `0`，下一個 admin request 會移除該本機 session。變更 bootstrap 環境變數不會覆寫現有 role 或狀態。
 
 ## 正式部署
 
-1. 在 Cloudflare Zero Trust 建立保護 `upload.pg72.tw/admin*` 的 Access application，將 team name 與 AUD tag 寫入 `.env`。
-2. 確認正式 `.env` 的 `DEV_MODE=false`，並配置 Resend 與正確的 `BASE_URL`。
-3. 使用 Uvicorn 或作業系統的 service manager 在 `127.0.0.1:3000` 執行 `main:app`。
-4. 參考 [nginx.conf](nginx.conf) 建立反向代理。必須保留 `proxy_request_buffering off`、超時設定與 `Cf-Access-Jwt-Assertion` header 透傳。
-5. 將 `uploads/` 與 `upload_service.db*` 納入備份，並限制只有服務帳號可讀寫。
-
-> 重要：`DEV_MODE=true` 會完全跳過管理端 Cloudflare Access JWT 驗證，不可用於公開或正式環境。
+1. 先在 PG72 ID 建立上述 client，將 client ID/secret 與 bootstrap admin `sub` 寫入 Upload 的 `.env`。
+2. 備份 SQLite 後啟動新版本，確認 `schema_migrations` 有 `0001_admin_oidc.sql`。
+3. 使用 service manager 在 `127.0.0.1:3000` 執行 `main:app`。
+4. 參考 [nginx.conf](nginx.conf) 建立 HTTPS 反向代理，保留 `proxy_request_buffering off` 與長上傳 timeout。應用不讀取 Cloudflare Access identity header。
+5. 端到端測試登入、授權頁、建立/撤銷上傳碼與 logout，再驗證一個小檔的公開分塊上傳。
+6. 將 `uploads/` 與 `upload_service.db*` 納入備份，只允許服務帳號讀寫。
 
 ## API 摘要
 
 | 方法 | 路徑 | 驗證 | 用途 |
 | --- | --- | --- | --- |
-| `POST` | `/api/validate` | 上傳碼 | 驗證上傳碼並建立 session token |
+| `POST` | `/api/validate` | 16 字上傳碼 | 建立 upload session token |
 | `POST` | `/api/upload/init` | `X-Session-Token` | 建立 pending upload |
 | `PUT` | `/api/upload/{upload_id}/chunk/{index}` | `X-Session-Token` | 上傳單一分塊 |
-| `POST` | `/api/upload/{upload_id}/complete` | `X-Session-Token` | 檢查分塊、組檔並寄送通知 |
-| `GET` | `/admin/api/me` | Cloudflare Access JWT | 取得登入信箱 |
-| `GET` | `/admin/api/stats` | Cloudflare Access JWT | 取得統計 |
-| `GET` / `POST` | `/admin/api/codes` | Cloudflare Access JWT | 列出或建立上傳碼 |
-| `GET` | `/admin/api/codes/{code_id}/qr` | Cloudflare Access JWT | 重新產生 QR Code |
-| `DELETE` | `/admin/api/codes/{code_id}` | Cloudflare Access JWT | 撤銷上傳碼 |
-| `GET` | `/admin/api/uploads` | Cloudflare Access JWT | 列出最新 200 筆上傳紀錄 |
+| `POST` | `/api/upload/{upload_id}/complete` | `X-Session-Token` | 組檔並寄送通知 |
+| `GET` | `/admin/login` | OIDC transaction | 開始 PG72 ID 登入 |
+| `GET` | `/admin/auth/callback` | state + PKCE + nonce + OIDC validation | 完成登入 |
+| `POST` | `/admin/logout` | admin session + Origin + CSRF | 刪除 session、撤銷 token、開始 RP logout |
+| `GET` | `/admin/api/me` | admin session | 取得 email、role 與 CSRF token |
+| `GET` | `/admin/api/stats` | admin session | 取得統計 |
+| `GET` / `POST` | `/admin/api/codes` | admin session；POST 另要 Origin + CSRF | 列出或建立上傳碼 |
+| `GET` | `/admin/api/codes/{code_id}/qr` | admin session | 重新產生 QR Code |
+| `DELETE` | `/admin/api/codes/{code_id}` | admin session + Origin + CSRF | 撤銷上傳碼 |
+| `GET` | `/admin/api/uploads` | admin session | 列出最新 200 筆 metadata |
 
-FastAPI 的 Swagger / ReDoc / OpenAPI 路由已關閉，不會暴露於線上。
+FastAPI Swagger / ReDoc / OpenAPI 路由已關閉。
 
 ## 專案結構
 
 ```text
 .
-├── main.py                 # FastAPI 應用、路由掛載、定期清理
-├── config.py               # Pydantic 環境變數設定
-├── database.py             # SQLite schema 與資料存取
+├── main.py
+├── config.py
+├── database.py
+├── migrations/0001_admin_oidc.sql
 ├── routes/
-│   ├── upload.py          # 公開驗碼與分塊上傳 API
-│   └── admin.py           # Cloudflare Access 驗證與管理 API
+│   ├── upload.py
+│   └── admin.py
 ├── utils/
-│   ├── code_gen.py        # 安全隨機上傳碼
-│   ├── file_handler.py    # 檔名建立、組檔、MIME 與暫存清理
-│   └── email_helper.py    # Resend 通知信
+│   ├── oidc_client.py
+│   ├── code_gen.py
+│   ├── file_handler.py
+│   └── email_helper.py
 ├── static/
-│   ├── index.html         # 上傳頁與 OG metadata
-│   ├── admin.html         # 管理頁
-│   ├── css/style.css      # 共用樣式與 RWD
-│   ├── js/                # 上傳與管理端互動
-│   ├── favicon.svg        # 網站圖示
-│   ├── og-preview.svg     # OG 圖可編輯原稿
-│   └── og-preview.png     # 1200 x 630 社群預覽圖
-├── nginx.conf              # 反向代理範例
-├── requirements.txt         # Python 依賴
-├── start.bat / start.ps1    # Windows 啟動腳本
-└── AGENTS.md                # AI coding agent 專案指引
+├── tests/test_admin_oidc.py
+├── nginx.conf
+├── requirements.txt
+└── AGENTS.md
 ```
+
+## 開發與驗證
+
+```bash
+python -m compileall main.py config.py database.py routes utils tests
+python -m unittest discover -s tests -v
+```
+
+自動化測試使用暫存 SQLite/upload/temp 路徑，不會觸碰正式 DB 或上傳檔。測試包含 OIDC PKCE/state/nonce URL、callback 一次性、allowlist、secure opaque cookie、Origin/CSRF、logout/revoke/state、migration idempotency 與公開上傳 session 隔離。
+
+## 安全注意事項
+
+- 不要提交 `.env`、SQLite、`uploads/`、`temp/` 或 client secret。
+- 不得將 email 當成 admin 授權鍵；只使用 PG72 ID issuer 下的 immutable `sub`。
+- Admin cookie 維持 `Secure` / `HttpOnly` / `SameSite=Lax`，不要新增跳過 OIDC 的 bypass。
+- 上傳 API 必須繼續驗證 upload session 與對應上傳碼的到期、撤銷狀態。
+- MIME 檢查只在通知信標示危險類型，不是防毒或惡意程式掃描。
+- 未來加入下載 API 時，必須另外實作授權、`Content-Disposition` 與路徑穿越防護。
 
 ## OG 預覽維護
 
-首頁已設定 Open Graph 與 Twitter Card，共用 `static/og-preview.png`。修改預覽圖時，先編輯 `static/og-preview.svg`，再以 ImageMagick 輸出 PNG：
+`static/og-preview.svg` 是可編輯原稿，`static/og-preview.png` 必須維持 `1200x630`：
 
 ```bash
 magick -background none static/og-preview.svg static/og-preview.png
 magick identify static/og-preview.png
 ```
-
-預期尺寸為 `1200x630`。部署後可檢查頁面原始碼的 `og:*` 標籤與 `https://upload.pg72.tw/og-preview.png`是否可公開存取。社群平台可能快取舊圖，更新圖片後需要重新抓取或更換檔名。
-
-## 開發與驗證
-
-專案目前沒有自動化測試。送出修改前至少執行：
-
-```bash
-python -m compileall main.py config.py database.py routes utils
-```
-
-並在 `DEV_MODE=true` 的本機環境手動檢查：建立上傳碼、驗碼、多檔分塊上傳、進度顯示、上傳紀錄與撤銷代碼。
-
-## 安全注意事項
-
-- 不要提交 `.env`、SQLite 檔案、`uploads/` 或 `temp/`。
-- 不要在正式環境開啟 `DEV_MODE`。
-- 上傳 API 必須繼續驗證 session 與其對應上傳碼的到期、撤銷狀態。
-- 現行 MIME 檢查只會在通知信標記危險類型，不是防毒或惡意程式掃描。
-- 若將來加入下載 API，必須額外實作授權、`Content-Disposition` 與路徑穿越防護。
