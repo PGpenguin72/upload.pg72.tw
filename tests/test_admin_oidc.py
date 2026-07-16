@@ -36,8 +36,8 @@ except ImportError:
 
 import database
 from config import settings
-from main import app
-from routes import admin
+from main import GLOBAL_SECURITY_HEADERS, app, fastapi_app, limiter
+from routes import admin, upload
 from utils import oidc_client as oidc
 
 from fastapi.testclient import TestClient
@@ -86,6 +86,12 @@ class AdminOidcTests(unittest.TestCase):
         self.assertIn("img-src 'self' data: blob:", csp)
         self.assertIn("media-src 'self' blob:", csp)
         self.assertIn("frame-ancestors 'none'", csp)
+        for name in GLOBAL_SECURITY_HEADERS:
+            self.assertEqual(
+                len(response.headers.get_list(name)),
+                1,
+                f"duplicate {name} header",
+            )
 
     def test_security_headers_cover_public_admin_api_and_assets(self):
         public_page = self.client.get("/")
@@ -96,17 +102,92 @@ class AdminOidcTests(unittest.TestCase):
         self.assertEqual(jsqr.status_code, 200)
         self._assert_security_headers(jsqr)
 
+        not_found = self.client.get("/missing")
+        self.assertEqual(not_found.status_code, 404)
+        self._assert_security_headers(not_found)
+
         public_api = self.client.post("/api/validate", json={"code": "short"})
         self.assertEqual(public_api.status_code, 400)
         self._assert_security_headers(public_api)
         self.assertEqual(public_api.headers["cache-control"], "no-store")
         self.assertEqual(public_api.headers["pragma"], "no-cache")
 
+        invalid_api = self.client.post("/api/validate", json={})
+        self.assertEqual(invalid_api.status_code, 422)
+        self._assert_security_headers(invalid_api)
+        self.assertEqual(invalid_api.headers["cache-control"], "no-store")
+        self.assertEqual(invalid_api.headers["pragma"], "no-cache")
+
         admin_redirect = self.client.get("/admin", follow_redirects=False)
         self.assertEqual(admin_redirect.status_code, 303)
         self._assert_security_headers(admin_redirect)
         self.assertEqual(admin_redirect.headers["cache-control"], "no-store")
         self.assertEqual(admin_redirect.headers["pragma"], "no-cache")
+
+    def test_security_headers_cover_rate_limit_response(self):
+        limiter.reset()
+        upload.limiter.reset()
+        try:
+            responses = [
+                self.client.post("/api/validate", json={"code": "short"})
+                for _ in range(21)
+            ]
+        finally:
+            limiter.reset()
+            upload.limiter.reset()
+
+        limited = responses[-1]
+        self.assertEqual(limited.status_code, 429)
+        self._assert_security_headers(limited)
+        self.assertEqual(limited.headers["cache-control"], "no-store")
+        self.assertEqual(limited.headers["pragma"], "no-cache")
+
+    def test_security_headers_cover_unhandled_500s(self):
+        limiter.reset()
+        upload.limiter.reset()
+        client = TestClient(
+            app,
+            base_url=settings.base_url,
+            raise_server_exceptions=False,
+        )
+        static_app = next(
+            route.app
+            for route in fastapi_app.routes
+            if getattr(route, "name", None) == "static"
+        )
+
+        with patch.object(
+            static_app,
+            "get_response",
+            AsyncMock(side_effect=RuntimeError("injected root failure")),
+        ):
+            root_error = client.get("/")
+
+        with patch.object(
+            database,
+            "get_code",
+            side_effect=RuntimeError("injected api failure"),
+        ):
+            api_error = client.post(
+                "/api/validate",
+                json={"code": "ABCDEFGHJKLMNPQR"},
+            )
+
+        with patch.object(
+            admin,
+            "_read_admin_session",
+            side_effect=RuntimeError("injected admin failure"),
+        ):
+            admin_error = client.get("/admin", follow_redirects=False)
+        client.close()
+
+        self.assertEqual(root_error.status_code, 500)
+        self._assert_security_headers(root_error)
+        for response in (api_error, admin_error):
+            self.assertEqual(response.status_code, 500)
+            self._assert_security_headers(response)
+            self.assertEqual(response.headers["cache-control"], "no-store")
+            self.assertEqual(response.headers["pragma"], "no-cache")
 
     def _begin_login(self, next_path=None):
         captured = {}

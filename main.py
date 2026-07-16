@@ -8,6 +8,8 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
+from starlette.datastructures import MutableHeaders
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 import database
 from config import settings
@@ -52,28 +54,54 @@ GLOBAL_SECURITY_HEADERS = {
     "X-XSS-Protection": "0",
 }
 
-app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
-app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-app.add_middleware(SlowAPIMiddleware)
+
+class SecurityHeadersMiddleware:
+    def __init__(self, app: ASGIApp):
+        self.app = app
+
+    async def __call__(
+        self,
+        scope: Scope,
+        receive: Receive,
+        send: Send,
+    ) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        path = scope.get("path", "")
+
+        async def send_with_security_headers(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                headers = MutableHeaders(scope=message)
+                for name, value in GLOBAL_SECURITY_HEADERS.items():
+                    headers[name] = value
+                if path.startswith(("/admin", "/api")):
+                    headers["Cache-Control"] = "no-store"
+                    headers["Pragma"] = "no-cache"
+            await send(message)
+
+        await self.app(scope, receive, send_with_security_headers)
 
 
-@app.middleware("http")
-async def security_headers(request, call_next):
-    response = await call_next(request)
-    for name, value in GLOBAL_SECURITY_HEADERS.items():
-        response.headers[name] = value
-
-    if request.url.path.startswith(("/admin", "/api")):
-        response.headers["Cache-Control"] = "no-store"
-        response.headers["Pragma"] = "no-cache"
-    return response
-
-app.include_router(upload_router, prefix="/api")
-app.include_router(admin_router, prefix="/admin")
+fastapi_app = FastAPI(
+    lifespan=lifespan,
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
+)
+fastapi_app.state.limiter = limiter
+fastapi_app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+fastapi_app.add_middleware(SlowAPIMiddleware)
+fastapi_app.include_router(upload_router, prefix="/api")
+fastapi_app.include_router(admin_router, prefix="/admin")
 
 # Static assets — index.html served last so /admin route takes priority
-app.mount("/", StaticFiles(directory="static", html=True), name="static")
+fastapi_app.mount("/", StaticFiles(directory="static", html=True), name="static")
+
+# This wrapper is deliberately outside FastAPI's ServerErrorMiddleware so the
+# final unhandled 500 response receives the same policy as ordinary responses.
+app = SecurityHeadersMiddleware(fastapi_app)
 
 
 if __name__ == "__main__":
