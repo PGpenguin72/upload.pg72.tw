@@ -21,7 +21,7 @@ There is intentionally no development authentication bypass.
 
 | Path | Responsibility |
 | --- | --- |
-| `main.py` | FastAPI construction, routers, security headers, lifespan, hourly cleanup |
+| `main.py` | FastAPI construction, routers, global security headers/CSP, lifespan, hourly cleanup |
 | `config.py` | Typed settings and exact HTTPS origin validation |
 | `database.py` | Existing upload schema, migrations, admin allowlist, OAuth transactions and sessions |
 | `migrations/` | Ordered, idempotently tracked SQLite migrations |
@@ -30,7 +30,7 @@ There is intentionally no development authentication bypass.
 | `utils/oidc_client.py` | Authlib discovery, PKCE, ID Token/UserInfo validation, revocation and RP logout |
 | `utils/code_gen.py` | Cryptographically secure 16-character upload code generation |
 | `utils/file_handler.py` | Extension sanitization, stored filenames, assembly, MIME lookup, temp cleanup |
-| `utils/email_helper.py` | Resend upload notification and dangerous MIME warning |
+| `utils/email_helper.py` | Escaped multipart Resend notification and dangerous MIME warning |
 | `static/js/upload.js` | QR scanning, client state, 5 MiB chunking, upload progress |
 | `static/js/admin.js` | Dashboard data, CSRF-bearing mutations and logout |
 | `nginx.conf` | Production reverse proxy with upload buffering disabled |
@@ -86,6 +86,12 @@ Never delete or rewrite user runtime data during development. Tests must redirec
 - Treat MIME detection as informational only. Current dangerous MIME handling warns by email; it is not malware scanning.
 - Do not add public access to `uploads/`. A future download route needs explicit authorization, safe response headers, and path traversal protection.
 - Keep production Nginx request buffering disabled for chunk uploads.
+- Keep browser runtime scripts and fonts self-hosted. A vendored dependency update
+  must pin the version, verify the published integrity and bundle hash, retain its
+  license/attribution, and update the regression test.
+- Treat filenames and MIME strings as untrusted in email. Subjects must be
+  single-line, HTML fields escaped, and every notification must include a plain-text
+  alternative.
 
 ## Coding conventions
 

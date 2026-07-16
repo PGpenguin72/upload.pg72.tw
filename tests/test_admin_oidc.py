@@ -67,6 +67,47 @@ class AdminOidcTests(unittest.TestCase):
         settings.temp_dir = self.original_temp_dir
         self.temp_dir.cleanup()
 
+    def _assert_security_headers(self, response):
+        self.assertEqual(
+            response.headers["strict-transport-security"],
+            "max-age=31536000",
+        )
+        self.assertEqual(response.headers["x-content-type-options"], "nosniff")
+        self.assertEqual(response.headers["x-frame-options"], "DENY")
+        self.assertEqual(response.headers["referrer-policy"], "no-referrer")
+        self.assertEqual(response.headers["x-xss-protection"], "0")
+        self.assertEqual(
+            response.headers["permissions-policy"],
+            "camera=(self), geolocation=(), microphone=(), payment=(), usb=()",
+        )
+        csp = response.headers["content-security-policy"]
+        self.assertIn("default-src 'none'", csp)
+        self.assertIn("script-src 'self'", csp)
+        self.assertIn("img-src 'self' data: blob:", csp)
+        self.assertIn("media-src 'self' blob:", csp)
+        self.assertIn("frame-ancestors 'none'", csp)
+
+    def test_security_headers_cover_public_admin_api_and_assets(self):
+        public_page = self.client.get("/")
+        self.assertEqual(public_page.status_code, 200)
+        self._assert_security_headers(public_page)
+
+        jsqr = self.client.get("/vendor/jsqr/jsQR-1.4.0.js")
+        self.assertEqual(jsqr.status_code, 200)
+        self._assert_security_headers(jsqr)
+
+        public_api = self.client.post("/api/validate", json={"code": "short"})
+        self.assertEqual(public_api.status_code, 400)
+        self._assert_security_headers(public_api)
+        self.assertEqual(public_api.headers["cache-control"], "no-store")
+        self.assertEqual(public_api.headers["pragma"], "no-cache")
+
+        admin_redirect = self.client.get("/admin", follow_redirects=False)
+        self.assertEqual(admin_redirect.status_code, 303)
+        self._assert_security_headers(admin_redirect)
+        self.assertEqual(admin_redirect.headers["cache-control"], "no-store")
+        self.assertEqual(admin_redirect.headers["pragma"], "no-cache")
+
     def _begin_login(self, next_path=None):
         captured = {}
 

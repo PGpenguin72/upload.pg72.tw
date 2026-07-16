@@ -33,6 +33,25 @@ async def _periodic_cleanup():
 
 limiter = Limiter(key_func=get_remote_address)
 
+CONTENT_SECURITY_POLICY = (
+    "default-src 'none'; base-uri 'none'; form-action 'self'; "
+    "frame-ancestors 'none'; object-src 'none'; script-src 'self'; "
+    "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
+    "font-src 'self'; connect-src 'self'; media-src 'self' blob:; "
+    "manifest-src 'self'; worker-src 'none'"
+)
+GLOBAL_SECURITY_HEADERS = {
+    "Content-Security-Policy": CONTENT_SECURITY_POLICY,
+    "Permissions-Policy": (
+        "camera=(self), geolocation=(), microphone=(), payment=(), usb=()"
+    ),
+    "Referrer-Policy": "no-referrer",
+    "Strict-Transport-Security": "max-age=31536000",
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "X-XSS-Protection": "0",
+}
+
 app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
@@ -40,20 +59,14 @@ app.add_middleware(SlowAPIMiddleware)
 
 
 @app.middleware("http")
-async def admin_security_headers(request, call_next):
+async def security_headers(request, call_next):
     response = await call_next(request)
-    if request.url.path.startswith("/admin"):
+    for name, value in GLOBAL_SECURITY_HEADERS.items():
+        response.headers[name] = value
+
+    if request.url.path.startswith(("/admin", "/api")):
         response.headers["Cache-Control"] = "no-store"
         response.headers["Pragma"] = "no-cache"
-        response.headers["Referrer-Policy"] = "no-referrer"
-        response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["X-Frame-Options"] = "DENY"
-        response.headers["Content-Security-Policy"] = (
-            "default-src 'self'; base-uri 'none'; form-action 'self'; "
-            "frame-ancestors 'none'; object-src 'none'; script-src 'self'; "
-            "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
-            "connect-src 'self'"
-        )
     return response
 
 app.include_router(upload_router, prefix="/api")

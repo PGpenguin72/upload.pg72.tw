@@ -1,11 +1,12 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
-
 /* ═══════════════════════════════════════════════════════════════════════════
    PGID Design Language — "Linear / Modern" (morden_dark)
    深空近黑底 + 單一飽和靛藍強調 + 分層環境光。
    Tokens 為單一來源;換色只需改此區塊。
    ═══════════════════════════════════════════════════════════════════════════ */
 :root {
+  --font-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+
   /* ── Backgrounds ── */
   --background-deep:     #020203; /* 最深:最底層 */
   --background-base:     #050506; /* 頁面主底(非純黑) */
@@ -70,7 +71,7 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 body {
-  font-family: "Inter", "Geist Sans", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-family: var(--font-sans);
   background: var(--background-base);
   color: var(--foreground);
   min-height: 100vh;
@@ -161,7 +162,7 @@ h2 { font-size: 1.05rem; font-weight: 600; margin-bottom: 16px; color: var(--for
 p  { color: var(--foreground-muted); line-height: 1.6; }
 label {
   display: block;
-  font-family: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+  font-family: var(--font-mono);
   font-size: .72rem;
   font-weight: 500;
   color: var(--foreground-muted);
@@ -178,7 +179,7 @@ input[type="text"] {
   border: 1px solid var(--border-hover);
   border-radius: var(--radius-sm);
   font-size: 1.375rem;
-  font-family: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+  font-family: var(--font-mono);
   letter-spacing: .22em;
   text-transform: uppercase;
   color: var(--foreground);
@@ -308,7 +309,7 @@ input[type="text"]::placeholder {
   gap: 8px;
   font-size: .75rem;
   color: var(--foreground-muted);
-  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-family: var(--font-mono);
   background: var(--surface);
   border: 1px solid var(--border-default);
   border-radius: 99px;
@@ -461,7 +462,7 @@ body.admin-layout::before {
 .topbar .email {
   font-size: .8125rem;
   color: var(--foreground-muted);
-  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-family: var(--font-mono);
 }
 .admin-account {
   display: flex;
@@ -513,7 +514,7 @@ body.admin-layout::before {
   opacity: .7;
 }
 .stat-card .label {
-  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-family: var(--font-mono);
   font-size: .7rem; color: var(--foreground-muted); margin-bottom: 8px;
   text-transform: uppercase; letter-spacing: .14em;
 }
@@ -549,7 +550,7 @@ th, td {
   color: var(--foreground);
 }
 th {
-  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-family: var(--font-mono);
   font-size: .7rem;
   font-weight: 500;
   color: var(--foreground-muted);
@@ -562,7 +563,7 @@ tr:hover td { background: rgba(255,255,255,.02); }
 
 /* ── Badges ─────────────────────────────────────────────────────────────── */
 .code-badge {
-  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-family: var(--font-mono);
   font-size: .8125rem;
   letter-spacing: .12em;
   background: var(--accent-soft);
@@ -624,7 +625,7 @@ tr:hover td { background: rgba(255,255,255,.02); }
 .modal h2 { font-size: 1.1rem; margin-bottom: 4px; }
 
 .modal .code-display {
-  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-family: var(--font-mono);
   font-size: 1.3rem;
   letter-spacing: .22em;
   color: var(--accent-text);

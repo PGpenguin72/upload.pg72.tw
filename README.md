@@ -11,10 +11,10 @@
 | PGID SSO | Authorization Code + PKCE S256，驗證 state、nonce、callback `iss`、ID Token 與 UserInfo |
 | 管理授權 | 以 PGID 不可變 `sub` 的本機 allowlist 與 `admin` role 雙重驗證 |
 | 限時上傳碼 | 管理員建立不含易混淆字元的 16 位代碼，可到期或手動撤銷 |
-| QR Code | 管理端可顯示、下載 QR，上傳者也可以相機掃碼 |
+| QR Code | 管理端可顯示、下載 QR；上傳者以本機託管的 jsQR 掃碼 |
 | 分塊上傳 | 瀏覽器以 5 MiB 分塊上傳，後端限制單塊最大 10 MiB |
 | 本機儲存 | 檔案寫入 `uploads/`，索引、上傳碼與 session 寫入 SQLite |
-| 通知與清理 | 完成後送出 Resend 通知，每小時清理過期 session 與未完成上傳 |
+| 通知與清理 | 完成後送出含 HTML 與純文字的 Resend 通知，每小時清理過期資料 |
 
 本專案沒有公開檔案下載 API，管理頁只列出 metadata。
 
@@ -76,6 +76,20 @@ python main.py
 ```
 
 Windows 可以 `start.bat` 啟動，或在 PowerShell 執行 `./start.ps1`。公開上傳頁可在 `http://127.0.0.1:3000/` 預覽；admin OIDC cookie 固定為 `Secure`，本機端到端測試應使用 HTTPS 反向代理或執行自動化測試，沒有跳過登入的開發模式。
+
+## 瀏覽器資產與安全 headers
+
+瀏覽器執行時不依賴第三方 CDN 或外部字型服務。QR 掃描使用原樣收錄的
+`jsQR 1.4.0`，版本、npm integrity、bundle SHA-256 與 Apache-2.0 license
+記錄於 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。UI 使用系統 sans
+與 monospace 字型 stack，不會向 Google Fonts 發出請求。
+
+所有 public、admin、API 與 static response 都套用 HSTS、CSP、
+`X-Content-Type-Options`、`X-Frame-Options`、Referrer Policy 與 Permissions
+Policy。CSP 只允許同源 script/style/API，並為管理端 QR `data:` 圖片與公開
+相機預覽保留所需的 `data:` / `blob:`。`/admin` 與 `/api` response 另外固定
+為 `no-store`。本機 HTTP 預覽會收到 HSTS header，但瀏覽器只會在 HTTPS
+連線上採用它。
 
 ## 環境變數
 
@@ -172,7 +186,9 @@ FastAPI Swagger / ReDoc / OpenAPI 路由已關閉。
 │   ├── file_handler.py
 │   └── email_helper.py
 ├── static/
+│   └── vendor/jsqr/      # audited jsQR bundle + Apache-2.0 license
 ├── tests/test_admin_oidc.py
+├── THIRD_PARTY_NOTICES.md
 ├── nginx.conf
 ├── requirements.txt
 └── AGENTS.md
@@ -194,6 +210,10 @@ python -m unittest discover -s tests -v
 - Admin cookie 維持 `Secure` / `HttpOnly` / `SameSite=Lax`，不要新增跳過 OIDC 的 bypass。
 - 上傳 API 必須繼續驗證 upload session 與對應上傳碼的到期、撤銷狀態。
 - MIME 檢查只在通知信標示危險類型，不是防毒或惡意程式掃描。
+- 通知信 subject 只使用單行 filename；HTML 內容會 escape 所有動態欄位，
+  並一併提供純文字 alternative。
+- 不要把第三方 browser runtime 改回 CDN；升級 vendored asset 時必須重新
+  核對 package integrity、bundle hash、license 與 regression test。
 - 未來加入下載 API 時，必須另外實作授權、`Content-Disposition` 與路徑穿越防護。
 
 ## OG 預覽維護

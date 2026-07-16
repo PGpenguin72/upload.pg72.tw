@@ -4,6 +4,11 @@
 
 參考:`/Users/pgpenguin72/sso.pg72.tw/morden_dark.txt`、`docs/design-system.md`。
 
+> 2026-07-17 security follow-up:下方 Inter / JetBrains Mono 記錄保留當時的
+> 視覺遷移決策；目前 runtime 已移除 Google Fonts，改用本機 system sans / mono
+> stacks，避免瀏覽器向第三方字型服務發出請求。其餘 morden_dark token 與版面
+> 決策不變。
+
 ## 範圍與邊界
 
 - 可改:`static/css/style.css`、`static/index.html`、`static/admin.html`(僅 `<link>`/`<meta theme-color>`/class 等視覺標記)。
