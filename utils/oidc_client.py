@@ -69,6 +69,24 @@ async def load_validated_metadata() -> dict:
     return metadata
 
 
+async def _fetch_userinfo(endpoint: str, access_token: str) -> dict:
+    # Authlib 1.7.2 adds Content-Length: 0 to its signed GET. Use a plain GET so
+    # PGID receives an unambiguously bodyless UserInfo request.
+    async with httpx.AsyncClient(timeout=10) as client:
+        response = await client.get(
+            endpoint,
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Accept": "application/json",
+            },
+        )
+        response.raise_for_status()
+        userinfo = response.json()
+    if not isinstance(userinfo, dict):
+        raise RuntimeError("OIDC UserInfo response is invalid")
+    return userinfo
+
+
 async def create_authorization_url(
     *, state: str, nonce: str, code_verifier: str
 ) -> str:
@@ -88,7 +106,7 @@ async def create_authorization_url(
 async def exchange_authorization_code(
     *, code: str, code_verifier: str, nonce: str
 ) -> tuple[dict, dict]:
-    await load_validated_metadata()
+    metadata = await load_validated_metadata()
     token = await oidc_client.fetch_access_token(
         redirect_uri=f"{settings.base_url}/admin/auth/callback",
         code=code,
@@ -99,7 +117,9 @@ async def exchange_authorization_code(
     id_token_claims = await oidc_client.parse_id_token(token, nonce=nonce, leeway=60)
     if id_token_claims is None:
         raise RuntimeError("OIDC ID token is missing")
-    userinfo = await oidc_client.userinfo(token=token)
+    userinfo = await _fetch_userinfo(
+        metadata["userinfo_endpoint"], token["access_token"]
+    )
     if userinfo.get("sub") != id_token_claims.get("sub"):
         raise RuntimeError("OIDC UserInfo subject mismatch")
     if userinfo.get(ROLE_CLAIM) != id_token_claims.get(ROLE_CLAIM):

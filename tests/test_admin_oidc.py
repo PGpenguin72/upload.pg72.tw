@@ -10,6 +10,8 @@ import unittest
 from unittest.mock import AsyncMock, patch
 from urllib.parse import parse_qs, urlencode, urlsplit
 
+import httpx
+
 
 os.environ.update(
     {
@@ -487,12 +489,63 @@ class OidcClientTests(unittest.TestCase):
             [f"{settings.base_url}/admin/auth/callback"],
         )
 
+    def test_token_exchange_fetches_userinfo_with_bodyless_bearer_get(self):
+        token = {
+            "access_token": "pg72_at_test",
+            "id_token": "header.payload.signature",
+        }
+        endpoint = f"{settings.oidc_issuer}/oauth2/userinfo"
+        metadata = AsyncMock(return_value={"userinfo_endpoint": endpoint})
+        fetch = AsyncMock(return_value=token)
+        parse = AsyncMock(return_value={"sub": ADMIN_SUBJECT, ROLE_CLAIM: "admin"})
+        captured = {}
+
+        async def userinfo_response(request):
+            captured["request"] = request
+            return httpx.Response(
+                200,
+                json={"sub": ADMIN_SUBJECT, ROLE_CLAIM: "admin"},
+                request=request,
+            )
+
+        http_client = httpx.AsyncClient(
+            transport=httpx.MockTransport(userinfo_response)
+        )
+        with (
+            patch.object(oidc, "load_validated_metadata", metadata),
+            patch.object(oidc.oidc_client, "fetch_access_token", fetch),
+            patch.object(oidc.oidc_client, "parse_id_token", parse),
+            patch.object(
+                oidc.httpx, "AsyncClient", return_value=http_client
+            ) as client_factory,
+        ):
+            returned_token, userinfo = asyncio.run(
+                oidc.exchange_authorization_code(
+                    code="authorization-code",
+                    code_verifier="code-verifier",
+                    nonce="nonce",
+                )
+            )
+
+        request = captured["request"]
+        self.assertEqual(request.method, "GET")
+        self.assertEqual(str(request.url), endpoint)
+        self.assertEqual(request.headers["Authorization"], "Bearer pg72_at_test")
+        self.assertEqual(request.headers["Accept"], "application/json")
+        self.assertNotIn("Content-Length", request.headers)
+        self.assertNotIn("Content-Type", request.headers)
+        self.assertEqual(request.content, b"")
+        self.assertEqual(returned_token, token)
+        self.assertEqual(userinfo["sub"], ADMIN_SUBJECT)
+        client_factory.assert_called_once_with(timeout=10)
+
     def test_token_exchange_rejects_userinfo_subject_mismatch(self):
         token = {
             "access_token": "pg72_at_test",
             "id_token": "header.payload.signature",
         }
-        metadata = AsyncMock(return_value={})
+        endpoint = f"{settings.oidc_issuer}/oauth2/userinfo"
+        metadata = AsyncMock(return_value={"userinfo_endpoint": endpoint})
         fetch = AsyncMock(return_value=token)
         parse = AsyncMock(return_value={"sub": ADMIN_SUBJECT, ROLE_CLAIM: "admin"})
         userinfo = AsyncMock(
@@ -505,9 +558,37 @@ class OidcClientTests(unittest.TestCase):
             patch.object(oidc, "load_validated_metadata", metadata),
             patch.object(oidc.oidc_client, "fetch_access_token", fetch),
             patch.object(oidc.oidc_client, "parse_id_token", parse),
-            patch.object(oidc.oidc_client, "userinfo", userinfo),
+            patch.object(oidc, "_fetch_userinfo", userinfo),
         ):
             with self.assertRaisesRegex(RuntimeError, "subject mismatch"):
+                asyncio.run(
+                    oidc.exchange_authorization_code(
+                        code="authorization-code",
+                        code_verifier="code-verifier",
+                        nonce="nonce",
+                    )
+                )
+        userinfo.assert_awaited_once_with(endpoint, "pg72_at_test")
+
+    def test_token_exchange_rejects_userinfo_role_mismatch(self):
+        token = {
+            "access_token": "pg72_at_test",
+            "id_token": "header.payload.signature",
+        }
+        endpoint = f"{settings.oidc_issuer}/oauth2/userinfo"
+        metadata = AsyncMock(return_value={"userinfo_endpoint": endpoint})
+        fetch = AsyncMock(return_value=token)
+        parse = AsyncMock(return_value={"sub": ADMIN_SUBJECT, ROLE_CLAIM: "admin"})
+        userinfo = AsyncMock(
+            return_value={"sub": ADMIN_SUBJECT, ROLE_CLAIM: "user"}
+        )
+        with (
+            patch.object(oidc, "load_validated_metadata", metadata),
+            patch.object(oidc.oidc_client, "fetch_access_token", fetch),
+            patch.object(oidc.oidc_client, "parse_id_token", parse),
+            patch.object(oidc, "_fetch_userinfo", userinfo),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "role claim mismatch"):
                 asyncio.run(
                     oidc.exchange_authorization_code(
                         code="authorization-code",
