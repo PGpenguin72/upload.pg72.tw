@@ -45,6 +45,12 @@ process.stdout.write(JSON.stringify({
         self.assertIn('escHtml(u.mime_type || "—")', source)
         self.assertIn("isCodeId(c.id) && isUploadCode(c.code)", source)
 
+    def test_logout_redirect_stays_on_upload_origin(self):
+        source = (ROOT / "static/js/admin.js").read_text(encoding="utf-8")
+        self.assertIn('await api("/admin/logout", "POST");', source)
+        self.assertIn('window.location.assign("/admin/logged-out");', source)
+        self.assertNotIn("const { logout_url }", source)
+
 
 if __name__ == "__main__":
     unittest.main()

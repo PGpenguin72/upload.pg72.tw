@@ -289,15 +289,7 @@ class AdminOidcTests(unittest.TestCase):
         self.assertEqual(len(create_code.json()["code"]), 16)
 
         revoke = AsyncMock()
-
-        async def fake_logout_url(id_token, state):
-            self.assertEqual(id_token, "header.payload.signature")
-            return f"{settings.oidc_issuer}/oauth2/end-session?{urlencode({'state': state})}"
-
-        with (
-            patch.object(admin, "revoke_access_token", revoke),
-            patch.object(admin, "create_logout_url", fake_logout_url),
-        ):
+        with patch.object(admin, "revoke_access_token", revoke):
             logout = self.client.post(
                 "/admin/logout",
                 headers={"Origin": settings.base_url, "X-CSRF-Token": csrf_token},
@@ -305,19 +297,14 @@ class AdminOidcTests(unittest.TestCase):
         self.assertEqual(logout.status_code, 200)
         revoke.assert_awaited_once_with("pg72_at_test")
         self.assertEqual(self.client.get("/admin/api/me").status_code, 401)
+        self.assertEqual(logout.json()["logout_url"], "/admin/logged-out")
 
-        state = parse_qs(urlsplit(logout.json()["logout_url"]).query)["state"][0]
         logged_out = self.client.get(
-            f"/admin/logged-out?{urlencode({'state': state})}",
+            logout.json()["logout_url"],
             follow_redirects=False,
         )
         self.assertEqual(logged_out.status_code, 303)
         self.assertEqual(logged_out.headers["location"], "/")
-        replay = self.client.get(
-            f"/admin/logged-out?{urlencode({'state': state})}",
-            follow_redirects=False,
-        )
-        self.assertEqual(replay.status_code, 400)
 
     def test_callback_rejects_missing_issuer_and_consumes_state_once(self):
         captured = self._begin_login()
@@ -373,23 +360,14 @@ class AdminOidcTests(unittest.TestCase):
         csrf_token = self.client.get("/admin/api/me").json()["csrf_token"]
         revoke = AsyncMock(side_effect=RuntimeError("provider unavailable"))
 
-        async def fake_logout_url(_id_token, state):
-            return f"{settings.oidc_issuer}/oauth2/end-session?{urlencode({'state': state})}"
-
-        with (
-            patch.object(admin, "revoke_access_token", revoke),
-            patch.object(admin, "create_logout_url", fake_logout_url),
-        ):
+        with patch.object(admin, "revoke_access_token", revoke):
             response = self.client.post(
                 "/admin/logout",
                 headers={"Origin": settings.base_url, "X-CSRF-Token": csrf_token},
             )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(self.client.get("/admin/api/me").status_code, 401)
-        self.assertEqual(
-            urlsplit(response.json()["logout_url"]).path,
-            "/oauth2/end-session",
-        )
+        self.assertEqual(response.json()["logout_url"], "/admin/logged-out")
 
     def test_public_upload_session_remains_separate_from_admin_session(self):
         code = "ABCDEFGHJKLMNPQR"

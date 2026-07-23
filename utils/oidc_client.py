@@ -1,4 +1,4 @@
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import urlsplit
 
 import httpx
 from authlib.integrations.starlette_client import OAuth
@@ -145,25 +145,6 @@ async def revoke_access_token(access_token: str) -> None:
             headers={"Accept": "application/json"},
         )
         response.raise_for_status()
-
-
-async def create_logout_url(id_token: str, state: str) -> str:
-    metadata = await load_validated_metadata()
-    endpoint = metadata.get("end_session_endpoint")
-    if not isinstance(endpoint, str) or _origin(endpoint) != settings.oidc_issuer:
-        raise RuntimeError("OIDC discovery returned an invalid end session endpoint")
-    result = await oidc_client.create_logout_url(
-        post_logout_redirect_uri=f"{settings.base_url}/admin/logged-out",
-        id_token_hint=id_token,
-        state=state,
-        client_id=settings.oidc_client_id,
-    )
-    if _origin(result["url"]) != settings.oidc_issuer:
-        raise RuntimeError("OIDC client returned an invalid logout URL")
-    returned_state = parse_qs(urlsplit(result["url"]).query).get("state", [])
-    if returned_state != [state]:
-        raise RuntimeError("OIDC client returned an unexpected logout state")
-    return result["url"]
 
 
 def encrypt_token(value: str) -> str:

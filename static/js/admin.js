@@ -20,8 +20,8 @@ async function loadMe() {
 
 document.getElementById("logout-btn").addEventListener("click", async () => {
   try {
-    const { logout_url } = await api("/admin/logout", "POST");
-    window.location.assign(logout_url || "/");
+    await api("/admin/logout", "POST");
+    window.location.assign("/admin/logged-out");
   } catch (err) {
     alert("登出失敗：" + err.message);
   }

@@ -33,13 +33,13 @@ rollback 驗證。
 | Client ID | `pg72-upload` |
 | Client type | confidential web client（`public = false`） |
 | Redirect URI | `https://upload.pg72.tw/admin/auth/callback` |
-| Post-logout redirect URI | `https://upload.pg72.tw/admin/logged-out` |
+| Post-logout redirect URI | 不使用；Upload 僅執行本機 logout |
 | Grant types | `authorization_code` |
 | Response types | `code` |
 | Scopes | `openid profile email` |
 | Token endpoint auth method | `client_secret_post` |
 | Require PKCE (S256) | `true` |
-| Enable end session（RP-Initiated Logout） | `true` |
+| Enable end session（RP-Initiated Logout） | `false` |
 | Skip consent | `false` |
 
 注意事項：
@@ -183,8 +183,8 @@ Secret 管理原則：
 4. 建立一組上傳碼、顯示 QR、再撤銷該碼，確認 CSRF 正常。
 5. 用該上傳碼在無痕視窗跑一次小檔（例如幾 KB）的 init/chunk/complete，確認公開
    上傳流程未受影響、Resend 通知寄達 `ADMIN_EMAIL`。
-6. 按 logout：確認本機 session 被刪、access token best-effort 撤銷、PGID
-   RP-Initiated Logout 帶正確 state 回到 `/admin/logged-out` 再導向 `/`。
+6. 按 logout：確認本機 session 被刪、access token best-effort 撤銷，瀏覽器只經
+   本機 `/admin/logged-out` 導向 `/`，而且既有 PGID session 保持登入。
 
 觀察 log：不得出現 token、secret、authorization code、完整 email/IP 等敏感值。
 

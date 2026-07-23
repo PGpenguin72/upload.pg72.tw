@@ -18,7 +18,6 @@ from utils.code_gen import generate_code
 from utils.oidc_client import (
     ROLE_CLAIM,
     create_authorization_url,
-    create_logout_url,
     decrypt_token,
     encrypt_token,
     exchange_authorization_code,
@@ -30,7 +29,6 @@ limiter = Limiter(key_func=get_remote_address)
 logger = logging.getLogger(__name__)
 
 OAUTH_COOKIE_NAME = f"{settings.admin_cookie_name}_oauth"
-LOGOUT_COOKIE_NAME = f"{settings.admin_cookie_name}_logout"
 
 
 def _hash_token(value: str) -> str:
@@ -250,30 +248,16 @@ async def auth_callback(
 
 
 @router.get("/logged-out")
-async def logged_out(request: Request, state: str | None = None):
-    expected_state = request.cookies.get(LOGOUT_COOKIE_NAME)
-    if (
-        not expected_state
-        or not state
-        or not secrets.compare_digest(expected_state, state)
-    ):
-        response = PlainTextResponse("登出 state 驗證失敗。", status_code=400)
-        response.delete_cookie(LOGOUT_COOKIE_NAME, path="/admin/logged-out")
-        return response
-    response = RedirectResponse("/", status_code=303)
-    response.delete_cookie(LOGOUT_COOKIE_NAME, path="/admin/logged-out")
-    return response
+async def logged_out():
+    return RedirectResponse("/", status_code=303)
 
 
 @router.post("/logout")
 async def logout(session: dict = Depends(require_admin_action)):
     stored_session = database.pop_admin_session(session["token_hash"])
-    logout_url = "/"
-    logout_state = None
     if stored_session:
         try:
             access_token = decrypt_token(stored_session["access_token_ciphertext"])
-            id_token = decrypt_token(stored_session["id_token_ciphertext"])
         except Exception as exc:
             logger.warning("OIDC logout token decryption failed: %s", type(exc).__name__)
         else:
@@ -281,23 +265,9 @@ async def logout(session: dict = Depends(require_admin_action)):
                 await revoke_access_token(access_token)
             except Exception as exc:
                 logger.warning("OIDC access token revocation failed: %s", type(exc).__name__)
-            try:
-                logout_state = secrets.token_urlsafe(32)
-                logout_url = await create_logout_url(id_token, logout_state)
-            except Exception as exc:
-                logout_state = None
-                logger.warning("OIDC end-session URL failed: %s", type(exc).__name__)
 
-    response = JSONResponse({"logout_url": logout_url})
+    response = JSONResponse({"logout_url": "/admin/logged-out"})
     response.delete_cookie(settings.admin_cookie_name, path="/admin")
-    if logout_state:
-        _set_cookie(
-            response,
-            name=LOGOUT_COOKIE_NAME,
-            value=logout_state,
-            max_age=settings.admin_oauth_transaction_ttl_seconds,
-            path="/admin/logged-out",
-        )
     return response
 
 

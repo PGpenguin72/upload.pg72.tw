@@ -27,7 +27,7 @@ There is intentionally no development authentication bypass.
 | `migrations/` | Ordered, idempotently tracked SQLite migrations |
 | `routes/upload.py` | Public code validation and authenticated chunk upload lifecycle |
 | `routes/admin.py` | OIDC callback, opaque admin session, CSRF, logout and admin APIs |
-| `utils/oidc_client.py` | Authlib discovery, PKCE, ID Token/UserInfo validation, revocation and RP logout |
+| `utils/oidc_client.py` | Authlib discovery, PKCE, ID Token/UserInfo validation and token revocation |
 | `utils/code_gen.py` | Cryptographically secure 16-character upload code generation |
 | `utils/file_handler.py` | Extension sanitization, stored filenames, assembly, MIME lookup, temp cleanup |
 | `utils/email_helper.py` | Escaped multipart Resend notification and dangerous MIME warning |
@@ -54,7 +54,7 @@ Admin flow:
 4. Authorization requires immutable `sub` membership in `admin_identities`, an active row, verified email, and exact `https://pg72.tw/role` equality with `required_role`.
 5. The browser receives an opaque admin cookie; only its SHA-256 hash is stored. Access and ID tokens are encrypted at rest with the configured Fernet key.
 6. Unsafe admin requests require both exact same-origin `Origin` and the session-bound `X-CSRF-Token` returned by `/admin/api/me`.
-7. `/admin/logout` removes the local session first, best-effort revokes the access token, then performs state-correlated RP-Initiated Logout.
+7. `/admin/logout` removes the local session first, best-effort revokes the access token, then returns a local `/admin/logged-out` URL. It does not terminate the PGID session.
 
 Preserve existing public response fields and endpoint paths unless the requested change explicitly includes a migration. Public upload sessions and admin sessions are separate security domains and must never become interchangeable.
 
@@ -79,7 +79,7 @@ Never delete or rewrite user runtime data during development. Tests must redirec
 - Keep state transactions single-use, PKCE S256, nonce verification, authorization-response `iss`, strict discovery endpoint origins, and verified UserInfo `sub`.
 - Keep admin cookies `Secure`, `HttpOnly`, `SameSite=Lax`, scoped to `/admin`, random and opaque. Persist only hashes.
 - Keep unsafe admin actions protected by exact `Origin` and session-bound CSRF tokens.
-- Delete the local admin session even when remote revocation or RP logout is unavailable; never log stored tokens or secrets.
+- Delete the local admin session even when remote token revocation is unavailable; never log stored tokens or secrets.
 - Never trust a client-provided filename as a storage path. Keep generated UUID-based stored names and sanitized extensions.
 - Every upload init/chunk/complete call must resolve a live upload session and verify that the pending upload belongs to the same `code_id`.
 - Keep file size, chunk size, chunk index, chunk count, and missing-chunk validation on the server.
@@ -130,7 +130,7 @@ The automated suite must use disposable storage and cover:
 - Callback transaction single-use behavior, strict issuer and allowlist rejection.
 - Secure opaque session cookie and authenticated `/admin/api/me`.
 - Origin plus CSRF enforcement for every mutation, including logout.
-- Local logout even if revocation fails, remote revocation, logout state and cookie deletion.
+- Local logout even if revocation fails, remote token revocation and local cookie deletion.
 - Migration idempotency and preservation of existing public code data.
 - Public 16-character code and `X-Session-Token` flow without an admin session.
 

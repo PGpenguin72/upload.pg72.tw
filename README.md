@@ -38,7 +38,7 @@ flowchart LR
 3. PGID 授權後回到 `GET /admin/auth/callback`。Authlib 透過 discovery/JWKS 驗證 ID Token，再校對 UserInfo `sub`、已驗證 email 與 namespaced role claim。
 4. 只有 `admin_identities` allowlist 內且 role 相符的 `sub` 會取得本機 admin session。瀏覽器 cookie 是隨機 opaque value，SQLite 只儲存 SHA-256 hash。
 5. 會變更資料的 admin API 另外要求精確同網站 `Origin` 與 session-bound CSRF token。
-6. `POST /admin/logout` 先刪本機 session，再 best-effort 撤銷 access token 並執行 OIDC RP-Initiated Logout。
+6. `POST /admin/logout` 先刪本機 session，再 best-effort 撤銷 Upload access token，最後只導向本機 `/admin/logged-out`；不終止 PGID session。
 
 公開上傳流程保持獨立：`POST /api/validate` 將 16 字上傳碼換成 `X-Session-Token`，之後的 init/chunk/complete 只辨識該 upload session，不會接受或依賴 admin cookie。
 
@@ -51,13 +51,13 @@ flowchart LR
 | Client ID | `pg72-upload` |
 | Client type | confidential web client (`public=false`) |
 | Redirect URI | `https://upload.pg72.tw/admin/auth/callback` |
-| Post-logout redirect URI | `https://upload.pg72.tw/admin/logged-out` |
+| Post-logout redirect URI | 不使用；Upload 僅執行本機 logout |
 | Grant types | `authorization_code` |
 | Response types | `code` |
 | Scopes | `openid profile email` |
 | Token endpoint auth | `client_secret_post` |
 | Require PKCE | `true` |
-| Enable end session | `true` |
+| Enable end session | `false` |
 | Skip consent | `false` |
 
 Client secret 由 SSO 產生，只放在 Upload 伺服器的 `OIDC_CLIENT_SECRET`，不得放入 Git、前端或 log。`skipConsent=false` 保留 PGID 對新應用的授權確認頁。
@@ -159,7 +159,7 @@ VALUES
 | `POST` | `/api/upload/{upload_id}/complete` | `X-Session-Token` | 組檔並寄送通知 |
 | `GET` | `/admin/login` | OIDC transaction | 開始 PGID 登入 |
 | `GET` | `/admin/auth/callback` | state + PKCE + nonce + OIDC validation | 完成登入 |
-| `POST` | `/admin/logout` | admin session + Origin + CSRF | 刪除 session、撤銷 token、開始 RP logout |
+| `POST` | `/admin/logout` | admin session + Origin + CSRF | 刪除 session、best-effort 撤銷 token、回傳本機 logout URL |
 | `GET` | `/admin/api/me` | admin session | 取得 email、role 與 CSRF token |
 | `GET` | `/admin/api/stats` | admin session | 取得統計 |
 | `GET` / `POST` | `/admin/api/codes` | admin session；POST 另要 Origin + CSRF | 列出或建立上傳碼 |
@@ -201,7 +201,7 @@ python -m compileall main.py config.py database.py routes utils tests
 python -m unittest discover -s tests -v
 ```
 
-自動化測試使用暫存 SQLite/upload/temp 路徑，不會觸碰正式 DB 或上傳檔。測試包含 OIDC PKCE/state/nonce URL、callback 一次性、allowlist、secure opaque cookie、Origin/CSRF、logout/revoke/state、migration idempotency 與公開上傳 session 隔離。
+自動化測試使用暫存 SQLite/upload/temp 路徑，不會觸碰正式 DB 或上傳檔。測試包含 OIDC PKCE/state/nonce URL、callback 一次性、allowlist、secure opaque cookie、Origin/CSRF、本機 logout/token revocation、migration idempotency 與公開上傳 session 隔離。
 
 ## 安全注意事項
 
