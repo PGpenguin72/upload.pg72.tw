@@ -6,10 +6,19 @@ import uuid
 from config import settings
 
 DB_PATH = "./upload_service.db"
+MIGRATIONS_DIR = os.path.join(os.path.dirname(__file__), "migrations")
+
+
+class _Connection(sqlite3.Connection):
+    def __exit__(self, exc_type, exc_value, traceback):
+        try:
+            return super().__exit__(exc_type, exc_value, traceback)
+        finally:
+            self.close()
 
 
 def get_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, factory=_Connection)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
@@ -59,7 +68,203 @@ def init_db() -> None:
 
             CREATE INDEX IF NOT EXISTS idx_codes_code      ON codes(code);
             CREATE INDEX IF NOT EXISTS idx_uploads_code_id ON uploads(code_id);
+
+            CREATE TABLE IF NOT EXISTS schema_migrations (
+                name       TEXT PRIMARY KEY,
+                applied_at INTEGER NOT NULL
+            );
         """)
+        _apply_migrations(conn)
+        bootstrap_admin_identity(
+            settings.oidc_bootstrap_admin_sub,
+            settings.oidc_admin_required_role,
+            conn=conn,
+        )
+
+
+def _apply_migrations(conn: sqlite3.Connection) -> None:
+    for name in sorted(os.listdir(MIGRATIONS_DIR)):
+        if not name.endswith(".sql"):
+            continue
+        applied = conn.execute(
+            "SELECT 1 FROM schema_migrations WHERE name = ?", (name,)
+        ).fetchone()
+        if applied:
+            continue
+
+        path = os.path.join(MIGRATIONS_DIR, name)
+        with open(path, "r", encoding="utf-8") as migration_file:
+            sql = migration_file.read()
+        escaped_name = name.replace("'", "''")
+        conn.executescript(
+            "BEGIN IMMEDIATE;\n"
+            f"{sql}\n"
+            "INSERT INTO schema_migrations (name, applied_at) "
+            f"VALUES ('{escaped_name}', {int(time.time())});\n"
+            "COMMIT;"
+        )
+
+
+# ── Human administrator identities and sessions ─────────────────────────────
+
+def bootstrap_admin_identity(
+    subject: str,
+    required_role: str,
+    *,
+    conn: sqlite3.Connection | None = None,
+) -> None:
+    now = int(time.time())
+    owns_connection = conn is None
+    active_conn = conn or get_conn()
+    try:
+        active_conn.execute(
+            """
+            INSERT OR IGNORE INTO admin_identities
+                (subject, required_role, is_active, created_at, updated_at)
+            VALUES (?, ?, 1, ?, ?)
+            """,
+            (subject, required_role, now, now),
+        )
+        if owns_connection:
+            active_conn.commit()
+    finally:
+        if owns_connection:
+            active_conn.close()
+
+
+def get_admin_identity(subject: str) -> dict | None:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM admin_identities WHERE subject = ?", (subject,)
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def create_admin_oauth_transaction(
+    handle_hash: str,
+    state_hash: str,
+    nonce: str,
+    code_verifier: str,
+    return_to: str,
+    expires_at: int,
+) -> None:
+    now = int(time.time())
+    with get_conn() as conn:
+        conn.execute(
+            "DELETE FROM admin_oauth_transactions WHERE expires_at <= ?", (now,)
+        )
+        conn.execute(
+            """
+            INSERT INTO admin_oauth_transactions
+                (handle_hash, state_hash, nonce, code_verifier, return_to,
+                 created_at, expires_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                handle_hash,
+                state_hash,
+                nonce,
+                code_verifier,
+                return_to,
+                now,
+                expires_at,
+            ),
+        )
+
+
+def consume_admin_oauth_transaction(
+    handle_hash: str, state_hash: str
+) -> dict | None:
+    now = int(time.time())
+    with get_conn() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            """
+            SELECT * FROM admin_oauth_transactions
+            WHERE handle_hash = ? AND state_hash = ? AND expires_at > ?
+            """,
+            (handle_hash, state_hash, now),
+        ).fetchone()
+        conn.execute(
+            "DELETE FROM admin_oauth_transactions WHERE handle_hash = ?",
+            (handle_hash,),
+        )
+        conn.commit()
+        return dict(row) if row else None
+
+
+def create_admin_session(
+    token_hash: str,
+    subject: str,
+    email: str,
+    role: str,
+    csrf_token: str,
+    access_token_ciphertext: str,
+    id_token_ciphertext: str,
+    oauth_expires_at: int,
+    expires_at: int,
+) -> None:
+    now = int(time.time())
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO admin_sessions
+                (token_hash, subject, email, role, csrf_token,
+                 access_token_ciphertext, id_token_ciphertext, oauth_expires_at,
+                 created_at, expires_at, last_seen_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                token_hash,
+                subject,
+                email,
+                role,
+                csrf_token,
+                access_token_ciphertext,
+                id_token_ciphertext,
+                oauth_expires_at,
+                now,
+                expires_at,
+                now,
+            ),
+        )
+
+
+def get_admin_session(token_hash: str) -> dict | None:
+    now = int(time.time())
+    with get_conn() as conn:
+        row = conn.execute(
+            """
+            SELECT s.*, i.required_role, i.is_active
+            FROM admin_sessions s
+            JOIN admin_identities i ON i.subject = s.subject
+            WHERE s.token_hash = ? AND s.expires_at > ?
+            """,
+            (token_hash, now),
+        ).fetchone()
+        if not row:
+            conn.execute(
+                "DELETE FROM admin_sessions WHERE token_hash = ?", (token_hash,)
+            )
+            return None
+        conn.execute(
+            "UPDATE admin_sessions SET last_seen_at = ? WHERE token_hash = ?",
+            (now, token_hash),
+        )
+        return dict(row)
+
+
+def pop_admin_session(token_hash: str) -> dict | None:
+    with get_conn() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT * FROM admin_sessions WHERE token_hash = ?", (token_hash,)
+        ).fetchone()
+        conn.execute(
+            "DELETE FROM admin_sessions WHERE token_hash = ?", (token_hash,)
+        )
+        conn.commit()
+        return dict(row) if row else None
 
 
 # ── Codes ────────────────────────────────────────────────────────────────────
@@ -204,4 +409,8 @@ def cleanup_expired() -> None:
             "DELETE FROM sessions WHERE code_id IN "
             "(SELECT id FROM codes WHERE expires_at < ? OR is_revoked = 1)",
             (now,),
+        )
+        conn.execute("DELETE FROM admin_sessions WHERE expires_at <= ?", (now,))
+        conn.execute(
+            "DELETE FROM admin_oauth_transactions WHERE expires_at <= ?", (now,)
         )

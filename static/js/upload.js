@@ -31,6 +31,7 @@ const SAFE_CHARS = new Set("ABCDEFGHJKLMNPQRSTUVWXYZ23456789");
 codeInput.addEventListener("input", () => {
   const raw = codeInput.value.toUpperCase().split("").filter((c) => SAFE_CHARS.has(c)).join("");
   codeInput.value = raw.slice(0, 16);
+  validateBtn.disabled = codeInput.value.length !== 16;
 });
 
 codeInput.addEventListener("keydown", (e) => {
@@ -39,6 +40,20 @@ codeInput.addEventListener("keydown", (e) => {
 
 validateBtn.addEventListener("click", validateCode);
 
+// ── Auto-fill from URL ?code= (手機掃 QR Code 直接跳轉用) ─────────────────
+(function autoFillFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  const raw = params.get("code") || "";
+  const code = raw.toUpperCase().split("").filter((c) => SAFE_CHARS.has(c)).join("").slice(0, 16);
+  if (code.length === 16) {
+    codeInput.value = code;
+    // 清除 URL 參數，避免重新整理重複觸發
+    history.replaceState(null, "", window.location.pathname);
+    // 短暫延遲讓頁面渲染完再自動驗證
+    setTimeout(validateCode, 300);
+  }
+})();
+
 async function validateCode() {
   const code = codeInput.value.trim();
   if (code.length !== 16) {
@@ -46,7 +61,7 @@ async function validateCode() {
     return;
   }
   validateBtn.disabled = true;
-  validateBtn.textContent = "驗證中…";
+  validateBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="animation:spin .7s linear infinite"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg> 驗證中…`;
   hideAlert(codeAlert);
 
   try {
@@ -64,7 +79,7 @@ async function validateCode() {
     showAlert(codeAlert, "error", err.message || "驗證失敗，請確認上傳碼是否正確");
   } finally {
     validateBtn.disabled = false;
-    validateBtn.textContent = "開始上傳";
+    validateBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> 驗證並上傳`;
   }
 }
 
